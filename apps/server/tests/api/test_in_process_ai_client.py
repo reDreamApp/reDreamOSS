@@ -43,6 +43,18 @@ from .conftest import start_chat
 _CONTENT_1 = 'data: {"content": "You turn ", "stages": ["rewriting"], "language": "en"}'
 _CONTENT_2 = 'data: {"content": "and face it.", "stages": ["rewriting"], "language": "en"}'
 _REHEARSAL = {"dream_id": "7", "user_id": "u-1", "rewritten_dream": "A lantern.", "language": "en"}
+_VOICE_ON = {
+    "stt_base_url": "http://speech.invalid/v1",
+    "stt_api_key": "stt-key",
+    "stt_model": "stt-test",
+    "tts_base_url": "http://speech.invalid/v1",
+    "tts_api_key": "tts-key",
+    "tts_model": "tts-test",
+    "tts_api_style": "openai",
+    "tts_voice": "voice-test",
+    "tts_voice_en": "",
+    "tts_voice_de": "",
+}
 
 
 def _chat_payload() -> dict[str, Any]:
@@ -61,16 +73,20 @@ def _chat_payload() -> dict[str, Any]:
 @pytest.fixture
 def ai(monkeypatch) -> types.SimpleNamespace:
     """The redream_ai modules the client calls into, with the core's agents
-    stubbed ready (no LLM behind them: every test mocks below the adapter)."""
+    stubbed ready (no LLM behind them: every test mocks below the adapter)
+    and speech switched on (the switch-off tests turn it off again)."""
     import redream_ai.api.audio as audio
     import redream_ai.api.chat as chat
     import redream_ai.api.safety as safety
     import redream_ai.audio.stt as stt
     import redream_ai.audio.tts as tts
+    from redream_ai.config import settings
     from redream_ai.core import irt_app
 
     monkeypatch.setattr(irt_app, "routing_agent", object())
     monkeypatch.setattr(irt_app, "response_agent", object())
+    for name, value in _VOICE_ON.items():
+        monkeypatch.setattr(settings, name, value)
     return types.SimpleNamespace(
         audio=audio, chat=chat, safety=safety, stt=stt, tts=tts, irt_app=irt_app
     )
@@ -326,6 +342,101 @@ async def test_rehearsal_generate_validates_and_returns_wire_json(ai, ai_client,
             dream_id="7", user_id="u-1", rewritten_dream="A lantern.", language=Language.EN
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# Speech switched off: no STT/TTS call at all.
+# ---------------------------------------------------------------------------
+
+
+def test_speech_switches_follow_the_settings(ai, ai_client, monkeypatch):
+    from redream_ai.config import settings
+
+    assert ai_client.stt_enabled and ai_client.tts_enabled
+    monkeypatch.setattr(settings, "stt_model", "")
+    monkeypatch.setattr(settings, "tts_voice", "")
+    monkeypatch.setattr(settings, "tts_voice_en", "voice-en")  # German has none
+    assert not ai_client.stt_enabled
+    assert not ai_client.tts_enabled
+
+
+@pytest.mark.parametrize(
+    ("method", "setting", "reason"),
+    [
+        ("transcribe", "stt_model", "speech input is off"),
+        ("rehearsal_generate", "tts_model", "speech output is off"),
+    ],
+)
+async def test_switched_off_speech_is_never_called(
+    ai, ai_client, monkeypatch, method, setting, reason
+):
+    from redream_ai.config import settings
+
+    async def never(*args, **kwargs):
+        raise AssertionError("STT/TTS must not run while switched off")
+
+    monkeypatch.setattr(settings, setting, "")
+    module, name = _seams(ai)[method]
+    monkeypatch.setattr(module, name, never)
+    monkeypatch.setattr(ai.stt, "transcribe", never)
+    monkeypatch.setattr(ai.tts, "generate_rehearsal", never)
+
+    with pytest.raises(AIServiceError) as exc_info:
+        await _calls(ai_client)[method]()
+
+    assert str(exc_info.value) == f"{method} failed: {reason}"
+
+
+def test_readiness_reports_switched_off_speech(ai, safety_llm, monkeypatch, caplog):
+    """Off (no model) is an info; a model without a voice is a warning."""
+    from redream_ai.config import settings
+
+    monkeypatch.setattr(settings, "stt_model", "")
+    monkeypatch.setattr(settings, "tts_voice", "")
+
+    with caplog.at_level(logging.INFO, logger=ai_client_mod.__name__):
+        InProcessAiClient().log_readiness()
+
+    speech = [
+        (r.levelno, r.getMessage().split(" — ")[0])
+        for r in caplog.records
+        if r.name == ai_client_mod.__name__ and r.getMessage().startswith("speech")
+    ]
+    assert speech == [
+        (logging.INFO, "speech input off"),
+        (logging.WARNING, "speech output off"),
+    ]
+
+
+def test_readiness_warns_when_speech_sends_the_llm_key_elsewhere(
+    ai, safety_llm, monkeypatch, caplog
+):
+    """An empty STT_/TTS_API_KEY with a speech host other than LLM_BASE_URL's
+    would get LLM_API_KEY: that half of speech stays off, with a warning (no key logged)."""
+    from redream_ai.config import settings
+
+    monkeypatch.setattr(settings, "llm_base_url", "https://llm.example.test/v1")
+    monkeypatch.setattr(settings, "llm_api_key", "llm-secret")
+    monkeypatch.setattr(settings, "stt_api_key", "")
+    monkeypatch.setattr(settings, "tts_api_key", "")
+
+    with caplog.at_level(logging.INFO, logger=ai_client_mod.__name__):
+        InProcessAiClient().log_readiness()
+
+    speech = [
+        (r.levelno, r.getMessage())
+        for r in caplog.records
+        if r.name == ai_client_mod.__name__ and r.getMessage().startswith("speech")
+    ]
+    assert [(level, message.split(":")[0]) for level, message in speech] == [
+        (logging.WARNING, "speech input off"),
+        (logging.WARNING, "speech output off"),
+    ]
+    assert "STT_BASE_URL is on another host" in speech[0][1]
+    assert "TTS_BASE_URL is on another host" in speech[1][1]
+    assert not any("llm-secret" in message for _, message in speech)
+    assert not InProcessAiClient().stt_enabled
+    assert not InProcessAiClient().tts_enabled
 
 
 # ---------------------------------------------------------------------------
@@ -630,6 +741,8 @@ async def test_lifespan_builds_the_client_once_and_logs_readiness(
     assert messages == [
         "IRT pipeline ready (agents=ok, safety_critic=disabled (fail-open))",
         f"crisis classifier ready (model={settings.safety_model})",
+        "speech input ready (model=stt-test)",
+        "speech output ready (model=tts-test, style=openai)",
     ]
     assert app.title == "reDreamOSS server"
 

@@ -12,7 +12,12 @@ from ....core.dependencies import get_current_user, get_db, require_consent
 from ....db.models.dream import Dream
 from ....db.models.user import User
 from ....db.repositories.dream_repo import DreamRepo
-from ....services.ai_client import AIServiceError, BaseAiClient, get_ai_client
+from ....services.ai_client import (
+    VOICE_UNAVAILABLE,
+    AIServiceError,
+    BaseAiClient,
+    get_ai_client,
+)
 from ....services.storage_service import delete_rehearsal_audio_for_dream, refresh_rehearsal_url
 from .schemas import DreamCreate, DreamOut, DreamUpdate, RehearsalGenerateRequest
 
@@ -181,12 +186,19 @@ async def generate_rehearsal(
         raise HTTPException(status.HTTP_409_CONFLICT, "rewritten_dream is required for rehearsal")
 
     # Cache: if audio already exists and matches the requested language, reuse.
+    # This holds while speech output is off too: it re-signs stored audio
+    # (as GET /rehearsal-url does) and sends nothing to a TTS provider.
     if (
         dream.rehearsal_audio_url
         and dream.rehearsal_language == body.language
         and dream.rehearsal_generated_at is not None
     ):
         return await _refresh_audio(db, dream)
+
+    # New audio needs TTS; switched off (no TTS_MODEL or voice), say so
+    # before any AI call.
+    if not ai.tts_enabled:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, VOICE_UNAVAILABLE)
 
     try:
         result = await ai.rehearsal_generate(

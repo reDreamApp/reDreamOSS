@@ -1,8 +1,12 @@
 """POST /audio/transcribe — dream voice journaling (ADR 0010).
 
-Hands the upload to redream_ai's STT (Whisper-on-Scaleway primary, Voxtral
-fallback). The transcript is returned to the client for the composer — nothing
-is persisted, and the audio bytes are discarded after transcription.
+Hands the upload to redream_ai's STT (the STT_* provider). The transcript is
+returned to the client for the composer — nothing is persisted, and the audio
+bytes are discarded after transcription.
+
+While speech input is off (no STT_MODEL), the route answers 503
+``voice_unavailable`` — after the consent gate, so a user without consent
+still gets 403 ``consent_required`` first.
 """
 
 from __future__ import annotations
@@ -12,7 +16,12 @@ import logging
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from ....core.dependencies import require_consent
-from ....services.ai_client import AIServiceError, BaseAiClient, get_ai_client
+from ....services.ai_client import (
+    VOICE_UNAVAILABLE,
+    AIServiceError,
+    BaseAiClient,
+    get_ai_client,
+)
 from .schemas import TranscribeOut
 
 log = logging.getLogger(__name__)
@@ -33,6 +42,8 @@ async def transcribe(
     file: UploadFile = File(...),
     ai: BaseAiClient = Depends(get_ai_client),
 ) -> TranscribeOut:
+    if not ai.stt_enabled:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, VOICE_UNAVAILABLE)
     if not file.filename:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "filename required")
 

@@ -12,6 +12,9 @@ Contract reference:
 - safety_classify   : user text → risk classification (ADR 0005)
 - transcribe        : audio bytes → transcript (ADR 0010)
 - rehearsal_generate: dream → audio_url + script + duration
+- stt_enabled / tts_enabled: whether each half of speech is configured; the
+                      routes answer 503 voice_unavailable while it is off,
+                      and the client never calls STT/TTS then
 
 Any failure on the AI side, whatever its type, surfaces as AIServiceError —
 as any non-2xx answer did over HTTP. redream_ai is imported on first use, so
@@ -35,10 +38,23 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # The budgets the HTTP boundary had (AI_REQUEST_TIMEOUT=90). Rehearsal gets
-# more: Voxtral has two 60s attempts plus the Storage calls.
+# more: TTS has two 60s attempts plus the Storage calls.
 _CHAT_TIMEOUT = 90.0
 _TRANSCRIBE_TIMEOUT = 90.0
 _REHEARSAL_TIMEOUT = 150.0
+
+# The 503 detail of /audio/transcribe and /dreams/{id}/rehearsal while their
+# half of speech is off.
+VOICE_UNAVAILABLE = "voice_unavailable"
+
+# Readiness warning when a half of speech is off because its base URL is on
+# another host than LLM_BASE_URL's and its own key is empty: LLM_API_KEY is
+# never sent to another provider (args: "input"/"output", "STT"/"TTS").
+_BORROWED_KEY = (
+    "speech %s off: %s_BASE_URL is on another host than LLM_BASE_URL's and its "
+    "API key is empty — LLM_API_KEY is not sent there; set that provider's key "
+    "(any value, e.g. none, for a server without auth)"
+)
 
 
 class AIServiceError(Exception):
@@ -53,6 +69,10 @@ class BaseAiClient(Protocol):
     async def safety_classify(self, payload: dict[str, Any]) -> dict[str, Any]: ...
     async def transcribe(self, *, file_name: str, audio_bytes: bytes) -> dict[str, Any]: ...
     async def rehearsal_generate(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+    @property
+    def stt_enabled(self) -> bool: ...
+    @property
+    def tts_enabled(self) -> bool: ...
 
 
 def _reason(op: str, exc: Exception) -> str:
@@ -103,7 +123,7 @@ class InProcessAiClient:
     def log_readiness(self) -> None:
         """Log what the AI side has ready. Importing the IRT core builds its
         agents and the SafetyCritic, so this also does that work up front."""
-        from redream_ai.config import LLM_REQUIRED, settings
+        from redream_ai.config import LLM_REQUIRED, STT_REQUIRED, TTS_REQUIRED, settings
         from redream_ai.core import irt_app
 
         if irt_app.routing_agent is None or irt_app.response_agent is None:
@@ -119,6 +139,43 @@ class InProcessAiClient:
             )
         else:
             log.info("crisis classifier ready (model=%s)", settings.safety_model)
+        # Speech is optional: off is an info, a model without the rest a warning.
+        if settings.stt_enabled:
+            log.info("speech input ready (model=%s)", settings.stt_model.strip())
+        elif settings.stt_model.strip() and settings.stt_borrows_llm_key:
+            log.warning(_BORROWED_KEY, "input", "STT")
+        else:
+            log.log(
+                logging.WARNING if settings.stt_model.strip() else logging.INFO,
+                "speech input off — set %s; transcribe answers 503",
+                STT_REQUIRED,
+            )
+        if settings.tts_enabled:
+            log.info(
+                "speech output ready (model=%s, style=%s)",
+                settings.tts_model.strip(),
+                settings.tts_api_style,
+            )
+        elif settings.tts_model.strip() and settings.tts_borrows_llm_key:
+            log.warning(_BORROWED_KEY, "output", "TTS")
+        else:
+            log.log(
+                logging.WARNING if settings.tts_model.strip() else logging.INFO,
+                "speech output off — set %s; rehearsal answers 503",
+                TTS_REQUIRED,
+            )
+
+    @property
+    def stt_enabled(self) -> bool:
+        from redream_ai.config import settings
+
+        return settings.stt_enabled
+
+    @property
+    def tts_enabled(self) -> bool:
+        from redream_ai.config import settings
+
+        return settings.tts_enabled
 
     async def chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         from redream_ai.api import chat as ai_chat
@@ -173,6 +230,8 @@ class InProcessAiClient:
         from redream_ai.api import audio as ai_audio
 
         async with _boundary("transcribe", _TRANSCRIBE_TIMEOUT):
+            if not self.stt_enabled:
+                raise AIServiceError("transcribe failed: speech input is off")
             resp = await ai_audio.transcribe(file_name=file_name, audio_bytes=audio_bytes)
             return resp.model_dump(mode="json")
 
@@ -181,6 +240,8 @@ class InProcessAiClient:
         from redream_ai.models import RehearsalRequest
 
         async with _boundary("rehearsal_generate", _REHEARSAL_TIMEOUT):
+            if not self.tts_enabled:
+                raise AIServiceError("rehearsal_generate failed: speech output is off")
             resp = await ai_audio.rehearsal_generate(RehearsalRequest.model_validate(payload))
             return resp.model_dump(mode="json")
 

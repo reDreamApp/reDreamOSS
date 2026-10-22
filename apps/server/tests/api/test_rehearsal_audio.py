@@ -14,6 +14,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from redream_api.core.config import settings
 from redream_api.services import storage_service
 from redream_api.services.ai_client import AIServiceError
 
@@ -126,7 +127,7 @@ async def _dream(client, rewritten: str | None = "You find the path home.") -> i
     return int(r.json()["id"])
 
 
-async def test_rehearsal_sends_owner_and_stores_url(client, fake_user, fake_ai):
+async def test_rehearsal_sends_owner_and_stores_url(client, fake_user, fake_ai, voice_on):
     dream_id = await _dream(client)
     fake_ai.queue_rehearsal(
         {
@@ -152,7 +153,7 @@ async def test_rehearsal_sends_owner_and_stores_url(client, fake_user, fake_ai):
     }
 
 
-async def test_rehearsal_provider_failure_is_502(client, fake_ai, monkeypatch):
+async def test_rehearsal_provider_failure_is_502(client, fake_ai, voice_on, monkeypatch):
     dream_id = await _dream(client)
 
     async def fail(payload):
@@ -164,7 +165,7 @@ async def test_rehearsal_provider_failure_is_502(client, fake_ai, monkeypatch):
 
 
 async def test_cached_rehearsal_is_reused_without_a_second_synthesis(
-    client, fake_ai, fake_user, monkeypatch
+    client, fake_ai, fake_user, voice_on, monkeypatch
 ):
     from redream_api.api.v1.dreams import routes
 
@@ -188,6 +189,79 @@ async def test_cached_rehearsal_is_reused_without_a_second_synthesis(
     monkeypatch.setattr(routes, "refresh_rehearsal_url", refresh)
     assert (await client.post(url, json={"language": "en"})).status_code == 200
     assert len(fake_ai.calls) == 1
+
+
+_AUDIO = {
+    "audio_url": "https://storage.example/audio.mp3?token=t",
+    "script": "You find the path home.",
+    "duration_estimate": "0:03",
+    "voice_id": "gb_jane_neutral",
+    "cache_hit": False,
+}
+
+
+async def test_rehearsal_while_speech_output_is_off_is_503_without_an_ai_call(client, fake_ai):
+    fake_ai.stt_enabled = True  # only the output half counts here
+    dream_id = await _dream(client)
+
+    r = await client.post(f"/api/v1/dreams/{dream_id}/rehearsal", json={"language": "en"})
+
+    assert r.status_code == 503
+    assert r.json() == {"detail": "voice_unavailable"}
+    assert [c for c in fake_ai.calls if c["method"] == "rehearsal_generate"] == []
+    dream = (await client.get(f"/api/v1/dreams/{dream_id}")).json()
+    assert dream["rehearsal_audio_url"] is None
+
+
+async def test_rehearsal_off_checks_consent_and_ownership_first(client, fake_ai, monkeypatch):
+    dream_id = await _dream(client)
+
+    r = await client.post("/api/v1/dreams/999/rehearsal", json={"language": "en"})
+    assert r.status_code == 404
+
+    monkeypatch.setattr(settings, "consent_version", "2099-01-01")
+    r = await client.post(f"/api/v1/dreams/{dream_id}/rehearsal", json={"language": "en"})
+    assert r.status_code == 403
+    assert r.json()["detail"] == "consent_required"
+
+
+async def test_rehearsal_off_without_a_rewritten_dream_is_still_409(client, fake_ai):
+    """The order: 404, 409, stored audio, then 503."""
+    dream_id = await _dream(client, rewritten=None)
+
+    r = await client.post(f"/api/v1/dreams/{dream_id}/rehearsal", json={"language": "en"})
+
+    assert r.status_code == 409
+    assert r.json()["detail"] == "rewritten_dream is required for rehearsal"
+    assert [c for c in fake_ai.calls if c["method"] == "rehearsal_generate"] == []
+
+
+async def test_stored_rehearsal_is_still_served_while_speech_output_is_off(
+    client, fake_ai, voice_on, monkeypatch
+):
+    """Switching TTS off stops new audio, not playback of audio already
+    stored: re-signing it sends nothing to a TTS provider."""
+    from redream_api.api.v1.dreams import routes
+
+    dream_id = await _dream(client)
+    fake_ai.queue_rehearsal(_AUDIO)
+    url = f"/api/v1/dreams/{dream_id}/rehearsal"
+    assert (await client.post(url, json={"language": "en"})).status_code == 200
+
+    async def refresh(audio_url, user_id, requested_dream_id):
+        return audio_url
+
+    monkeypatch.setattr(routes, "refresh_rehearsal_url", refresh)
+    fake_ai.tts_enabled = False
+
+    r = await client.post(url, json={"language": "en"})
+    assert r.status_code == 200
+    assert r.json()["rehearsal_audio_url"] == _AUDIO["audio_url"]
+    # Another language would need new audio.
+    r = await client.post(url, json={"language": "de"})
+    assert r.status_code == 503
+    assert r.json() == {"detail": "voice_unavailable"}
+    assert len([c for c in fake_ai.calls if c["method"] == "rehearsal_generate"]) == 1
 
 
 async def test_deleting_a_dream_deletes_its_audio(client, fake_user, monkeypatch):

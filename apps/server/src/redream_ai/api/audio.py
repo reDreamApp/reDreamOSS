@@ -1,4 +1,9 @@
-"""transcribe + rehearsal_generate — Voxtral STT/TTS (ADR 0010)."""
+"""transcribe + rehearsal_generate — STT/TTS (ADR 0010).
+
+Both raise LlmUnavailableError while their half of speech is off
+(`settings.stt_enabled` / `settings.tts_enabled`); the backend checks those
+first and answers 503 ``voice_unavailable`` instead of calling.
+"""
 
 from __future__ import annotations
 

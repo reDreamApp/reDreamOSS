@@ -1,19 +1,19 @@
-"""STT — transcribe dream voice journals (ADR 0010, amended 2026-07-09).
+"""STT — transcribe dream voice journals (ADR 0010).
 
-Provider topology mirrors the chat agents: **Whisper on Scaleway primary,
-Voxtral Transcribe on direct Mistral fallback.** The choice is a privacy one,
-not a quality one: raw voice recordings are the app's most sensitive payload
-(Art. 9 content in an identifiable voice), and Scaleway Generative APIs are
-zero-retention Paris inference, while Mistral La Plateforme retains inputs up
-to 30 days for abuse monitoring until ZDR is granted.
-Voxtral on Scaleway is not an option — EOL there 2026-08-01.
+One provider, from configuration: a multipart ``POST
+{STT_BASE_URL}/audio/transcriptions`` with ``model``, ``file`` and, when the
+caller knows it, ``language`` — the OpenAI-compatible shape that OpenAI,
+Mistral La Plateforme and Scaleway Generative APIs all accept. STT_BASE_URL /
+STT_API_KEY fall back to LLM_BASE_URL / LLM_API_KEY; without STT_MODEL
+transcription is off (`settings.stt_enabled`) and the backend answers 503
+``voice_unavailable`` before anything reaches this module.
 
-Both providers speak the OpenAI-compatible ``POST /v1/audio/transcriptions``
-multipart shape, so one request helper serves both.
+Privacy: raw voice recordings are the app's most sensitive payload (Art. 9
+content in an identifiable voice). Pick the provider for its retention terms,
+not only its quality.
 
 Storage policy: the source audio is NOT persisted. Transcribe, return text,
-discard bytes. If users later want playback of their own narration, that's a
-deliberate scope expansion.
+discard bytes.
 """
 
 from __future__ import annotations
@@ -24,64 +24,62 @@ from typing import Any
 
 import httpx
 
-from ..config import settings
+from ..config import STT_REQUIRED, settings
 from ..llm.base import LlmUnavailableError
 from ..models import Language, TranscribeResponse
 
 log = logging.getLogger(__name__)
 
-MISTRAL_TRANSCRIPTIONS_URL = "https://api.mistral.ai/v1/audio/transcriptions"
-
-
-def _scaleway_transcriptions_url() -> str:
-    # Same rule as core/agent.py: a project-restricted key must name its
-    # project in the URL (SCALEWAY_PROJECT_ID); without it Scaleway uses the
-    # organization's default project.
-    project = f"/{settings.scaleway_project_id}" if settings.scaleway_project_id else ""
-    return f"https://api.scaleway.ai{project}/v1/audio/transcriptions"
-
-
-
 # Audio upload + inference is slow; chat-style short timeouts would false-fail.
 _TIMEOUT = 120.0
-# One retry per provider on transient errors (429/5xx/network). Fewer attempts
-# than the chat agents' 4 — every retry re-uploads the whole recording.
+# One retry on transient errors (429/5xx/network). Fewer attempts than the
+# chat agents' — every retry re-uploads the whole recording.
 _RETRY_DELAY = 1.0
 _ATTEMPTS = 2
 
 # Test seam: tests install an httpx.MockTransport here; None means real HTTP.
 _transport: httpx.AsyncBaseTransport | None = None
 
-# Whisper reports full language names ("english"); Voxtral reports ISO codes.
-# The wire enum is en/de only — anything else is best-effort None.
+# Whisper reports full language names ("english"), Voxtral ISO codes ("en"),
+# some providers a region ("en-US"). The wire enum is en/de only — anything
+# else is best-effort None.
 _LANGUAGE_MAP = {
     "en": Language.EN,
     "english": Language.EN,
     "de": Language.DE,
     "german": Language.DE,
+    "deutsch": Language.DE,
 }
 
 
 def _detected_language(payload: dict[str, Any]) -> Language | None:
     raw = payload.get("language")
+    if raw is None:
+        # OpenAI's gpt-transcribe reports a list instead: [{"code": "de"}].
+        languages = payload.get("languages")
+        if isinstance(languages, list) and languages and isinstance(languages[0], dict):
+            raw = languages[0].get("code")
     if not isinstance(raw, str):
         return None
-    return _LANGUAGE_MAP.get(raw.strip().lower())
+    key = raw.strip().lower().replace("_", "-")
+    return _LANGUAGE_MAP.get(key) or _LANGUAGE_MAP.get(key.split("-")[0])
 
 
-async def _transcribe_via(
-    *,
-    provider: str,
-    url: str,
-    api_key: str,
-    model: str,
-    audio_bytes: bytes,
-    file_name: str,
+async def transcribe(
+    *, audio_bytes: bytes, file_name: str, language: Language | None = None
 ) -> TranscribeResponse:
-    """One provider attempt (with transient retries). Raises on any failure —
-    the caller decides whether a fallback exists."""
-    if not api_key:
-        raise LlmUnavailableError(f"{provider} API key not configured")
+    """Transcribe one recording.
+
+    Raises LlmUnavailableError (-> AIServiceError in the backend) when STT is
+    off, on a hard 4xx (at once) or once the transient retries are used up.
+    """
+    if not settings.stt_enabled:
+        raise LlmUnavailableError(f"speech input is off (set {STT_REQUIRED})")
+
+    url = f"{settings.stt_base}/audio/transcriptions"
+    data = {"model": settings.stt_model.strip()}
+    if language is not None:
+        data["language"] = language.value
 
     last_exc: Exception | None = None
     async with httpx.AsyncClient(timeout=_TIMEOUT, transport=_transport) as client:
@@ -89,72 +87,37 @@ async def _transcribe_via(
             try:
                 r = await client.post(
                     url,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    data={"model": model},
+                    headers={"Authorization": f"Bearer {settings.stt_key}"},
+                    data=data,
                     files={"file": (file_name, audio_bytes)},
                 )
             except httpx.HTTPError as exc:
                 last_exc = exc
             else:
                 if r.status_code < 300:
-                    payload = r.json()
-                    return TranscribeResponse(
-                        text=str(payload.get("text", "")),
-                        language_detected=_detected_language(payload),
-                    )
-                if r.status_code == 429 or r.status_code >= 500:
-                    last_exc = LlmUnavailableError(
-                        f"{provider} STT {r.status_code}: {r.text[:200]}"
-                    )
-                else:
-                    # Hard 4xx (bad key, model EOL'd, unsupported format):
-                    # retrying is pointless — surface immediately so the
-                    # caller can fall back.
-                    raise LlmUnavailableError(f"{provider} STT {r.status_code}: {r.text[:200]}")
+                    return _parse(r)
+                last_exc = LlmUnavailableError(f"STT {r.status_code}: {r.text[:200]}")
+                if r.status_code != 429 and r.status_code < 500:
+                    # Bad key, unknown model, unsupported format: retrying
+                    # won't help.
+                    raise last_exc
             if attempt < _ATTEMPTS - 1:
-                log.warning(
-                    "stt.retry provider=%s attempt=%d error=%s",
-                    provider,
-                    attempt + 1,
-                    last_exc,
-                )
+                log.warning("stt.retry attempt=%d error=%s", attempt + 1, last_exc)
                 await asyncio.sleep(_RETRY_DELAY)
     assert last_exc is not None
-    raise last_exc
+    if isinstance(last_exc, LlmUnavailableError):
+        raise last_exc
+    raise LlmUnavailableError(f"STT failed: {type(last_exc).__name__}: {last_exc}") from last_exc
 
 
-async def transcribe(*, audio_bytes: bytes, file_name: str) -> TranscribeResponse:
-    """Transcribe: Whisper on Scaleway, falling back to Voxtral on Mistral.
-
-    Raises LlmUnavailableError (-> AIServiceError in the backend) only when
-    both providers fail.
-    """
+def _parse(r: httpx.Response) -> TranscribeResponse:
     try:
-        return await _transcribe_via(
-            provider="scaleway",
-            url=_scaleway_transcriptions_url(),
-            api_key=settings.scaleway_api_key,
-            model=settings.whisper_stt_model,
-            audio_bytes=audio_bytes,
-            file_name=file_name,
-        )
-    except Exception as primary_exc:
-        log.warning(
-            "stt.primary_failed model=%s error=%s — falling back to %s on Mistral",
-            settings.whisper_stt_model,
-            primary_exc,
-            settings.voxtral_stt_model,
-        )
-        try:
-            return await _transcribe_via(
-                provider="mistral",
-                url=MISTRAL_TRANSCRIPTIONS_URL,
-                api_key=settings.mistral_api_key,
-                model=settings.voxtral_stt_model,
-                audio_bytes=audio_bytes,
-                file_name=file_name,
-            )
-        except LlmUnavailableError:
-            raise
-        except Exception as fallback_exc:
-            raise LlmUnavailableError(f"STT fallback failed: {fallback_exc}") from fallback_exc
+        payload = r.json()
+    except ValueError as exc:
+        raise LlmUnavailableError("STT returned no JSON") from exc
+    if not isinstance(payload, dict):
+        raise LlmUnavailableError("STT returned no JSON object")
+    return TranscribeResponse(
+        text=str(payload.get("text") or ""),
+        language_detected=_detected_language(payload),
+    )

@@ -1,6 +1,6 @@
 # apps/server — backend + AI
 
-One Python project with two packages side by side: `redream_api` (FastAPI + async SQLAlchemy + Supabase JWT; source of truth for users, dreams, chats, daily moods) and `redream_ai` (IRT chatbot, crisis classifier, Voxtral STT/TTS). Imports only go `redream_api` → `redream_ai`, never the other way. One process: the backend calls the AI side in-process (`redream_api.services.ai_client`); no AI route is reachable over HTTP.
+One Python project with two packages side by side: `redream_api` (FastAPI + async SQLAlchemy + Supabase JWT; source of truth for users, dreams, chats, daily moods) and `redream_ai` (IRT chatbot, crisis classifier, STT/TTS). Imports only go `redream_api` → `redream_ai`, never the other way. One process: the backend calls the AI side in-process (`redream_api.services.ai_client`); no AI route is reachable over HTTP.
 
 ## Local dev
 
@@ -28,6 +28,6 @@ Fully offline: in-memory SQLite (aiosqlite) with a `FakeAiClient` for `tests/api
 - `redream_ai.api` — the plain async functions the AI client calls (`chat`, `chat_stream`, `safety_classify`, `transcribe`, `rehearsal_generate`).
 - `redream_ai.core` / `redream_ai.clinical_safety` — vendored IRT engine + `SafetyCritic` (excluded from lint/type rules). Chat/routing/safety-critic models come from `LLM_MODEL` / `LLM_SMALL_MODEL`.
 - `redream_ai.safety.classifier` — crisis classifier on `LLM_SAFETY_MODEL` (default `LLM_SMALL_MODEL`), no fallback; a failed check fails the chat turn.
-- `redream_ai.audio` — Voxtral TTS + Supabase Storage upload, Whisper/Voxtral STT.
+- `redream_ai.audio` — TTS + Supabase Storage upload, STT; one provider each from `STT_*` / `TTS_*` (see `.env.example`), off without a model (the routes answer 503 `voice_unavailable`).
 
 See [`../../docs/decisions/`](../../docs/decisions/README.md) for the binding architectural decisions.

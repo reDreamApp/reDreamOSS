@@ -1,9 +1,9 @@
-"""STT: Whisper-on-Scaleway primary + Voxtral-on-Mistral fallback (ADR 0010).
+"""STT: one provider from configuration (STT_BASE_URL / STT_API_KEY / STT_MODEL).
 
 Fully offline: an httpx.MockTransport goes in via the module's `_transport`
 seam, and retry sleeps are zeroed. Request shapes (multipart file + model
-field, bearer auth) are asserted against the OpenAI-compatible contract both
-providers implement.
+field, bearer auth) are asserted against the OpenAI-compatible
+/audio/transcriptions contract.
 """
 
 from __future__ import annotations
@@ -14,16 +14,22 @@ from fastapi import HTTPException
 
 import redream_ai.api.audio as audio
 import redream_ai.audio.stt as stt
+from redream_ai.config import Settings
 from redream_ai.llm.base import LlmUnavailableError
 from redream_ai.models import Language
 
+_BASE = "https://stt.example.test/v1"
+
 
 @pytest.fixture(autouse=True)
-def _fast_and_keyed(monkeypatch):
+def _fast_and_configured(monkeypatch):
     monkeypatch.setattr(stt, "_RETRY_DELAY", 0.0)
-    monkeypatch.setattr(stt.settings, "scaleway_api_key", "scw-test")
-    monkeypatch.setattr(stt.settings, "scaleway_project_id", "")
-    monkeypatch.setattr(stt.settings, "mistral_api_key", "mst-test")
+    s = stt.settings
+    monkeypatch.setattr(s, "llm_base_url", "https://llm.example.test/v1")
+    monkeypatch.setattr(s, "llm_api_key", "llm-key")
+    monkeypatch.setattr(s, "stt_base_url", _BASE)
+    monkeypatch.setattr(s, "stt_api_key", "stt-key")
+    monkeypatch.setattr(s, "stt_model", "whisper-test")
 
 
 def _install_transport(monkeypatch, handler) -> list[httpx.Request]:
@@ -37,138 +43,281 @@ def _install_transport(monkeypatch, handler) -> list[httpx.Request]:
     return requests
 
 
-def test_stt_model_pins():
-    """ADR 0010 (2026-07-09 amendment): both STT models are pinned — a silent
-    default change here is a provider/model change and needs the ADR updated."""
-    from redream_ai.config import Settings
-
-    # Class defaults, not a Settings() instance — Settings() reads the
-    # developer's real .env (pydantic-settings env_file).
-    fields = Settings.model_fields
-    assert fields["whisper_stt_model"].default == "openai/whisper-large-v3:fp16"
-    assert fields["voxtral_stt_model"].default == "voxtral-mini-2602"
+def _ok(language: object = "english", **extra: object):
+    payload = {"text": "I was chased through a forest.", "language": language, **extra}
+    return lambda request: httpx.Response(200, json=payload)
 
 
-async def test_scaleway_primary_success(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "api.scaleway.ai"
-        assert request.headers["Authorization"] == "Bearer scw-test"
-        body = request.read()
-        assert stt.settings.whisper_stt_model.encode() in body  # model form field
-        assert b"dream.mp3" in body  # multipart file name
-        return httpx.Response(
-            200,
-            json={"text": "I was chased through a forest.", "language": "english"},
-        )
+def _form_field(body: bytes, name: str) -> bytes | None:
+    """The value of multipart field `name`, None if absent."""
+    marker = f'name="{name}"\r\n\r\n'.encode()
+    if marker not in body:
+        return None
+    return body.split(marker, 1)[1].split(b"\r\n", 1)[0]
 
-    requests = _install_transport(monkeypatch, handler)
+
+# --- settings ---------------------------------------------------------------
+
+
+def test_transcription_is_off_by_default():
+    s = Settings(_env_file=None, llm_base_url="https://llm.example.test/v1", llm_api_key="k")
+    assert s.stt_model == ""
+    assert not s.stt_enabled
+
+
+def test_base_url_and_key_fall_back_to_the_llm_endpoint():
+    s = Settings(
+        _env_file=None,
+        llm_base_url="https://llm.example.test/v1/",
+        llm_api_key="llm-key",
+        stt_model="m",
+    )
+    assert (s.stt_base, s.stt_key) == ("https://llm.example.test/v1", "llm-key")
+    assert s.stt_enabled
+
+    own = Settings(
+        _env_file=None,
+        llm_base_url="https://llm.example.test/v1",
+        llm_api_key="llm-key",
+        stt_base_url="https://stt.example.test/v1",
+        stt_api_key="stt-key",
+        stt_model="m",
+    )
+    assert (own.stt_base, own.stt_key) == ("https://stt.example.test/v1", "stt-key")
+
+
+@pytest.mark.parametrize(
+    ("speech", "borrows"),
+    [
+        ({}, False),  # the LLM endpoint and key
+        ({"stt_base_url": "https://LLM.example.test/v1/"}, False),  # the LLM's host
+        # A project-scoped path on the LLM's host (Scaleway) keeps its key.
+        ({"stt_base_url": "https://llm.example.test/project-1/v1"}, False),
+        ({"stt_base_url": _BASE}, True),  # another host, the LLM's key
+        ({"stt_base_url": "https://llm.example.test:8001/v1"}, True),  # another port
+        ({"stt_base_url": _BASE, "stt_api_key": "own"}, False),
+    ],
+)
+def test_llm_key_sent_to_another_host_is_flagged(speech, borrows):
+    """LLM_API_KEY is only reused on LLM_BASE_URL's host: for another host
+    with an empty STT_API_KEY transcription stays off (and is warned about)."""
+    s = Settings(
+        _env_file=None,
+        llm_base_url="https://llm.example.test/v1",
+        llm_api_key="llm-key",
+        stt_model="m",
+        **speech,
+    )
+    assert s.stt_borrows_llm_key is borrows
+    assert s.stt_enabled is not borrows
+    assert s.stt_key == ("" if borrows else s.stt_api_key.strip() or "llm-key")
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        {"stt_model": "  "},
+        {"stt_base_url": "", "llm_base_url": ""},
+        {"stt_api_key": "", "llm_api_key": ""},
+    ],
+)
+def test_enabled_needs_a_model_a_base_url_and_a_key(missing):
+    complete = {"stt_base_url": _BASE, "stt_api_key": "k", "stt_model": "m"}
+    assert Settings(_env_file=None, **complete).stt_enabled
+    assert not Settings(_env_file=None, **{**complete, **missing}).stt_enabled
+
+
+def test_values_come_from_the_environment(monkeypatch):
+    monkeypatch.setenv("STT_BASE_URL", _BASE)
+    monkeypatch.setenv("STT_API_KEY", "stt-key")
+    monkeypatch.setenv("STT_MODEL", "voxtral-mini-2602")
+
+    s = Settings(_env_file=None)
+
+    assert (s.stt_base, s.stt_key, s.stt_model) == (_BASE, "stt-key", "voxtral-mini-2602")
+    assert s.stt_enabled
+
+
+# --- requests ---------------------------------------------------------------
+
+
+async def test_posts_multipart_to_the_configured_endpoint(monkeypatch):
+    requests = _install_transport(monkeypatch, _ok())
 
     resp = await stt.transcribe(audio_bytes=b"fake-audio", file_name="dream.mp3")
 
     assert resp.text == "I was chased through a forest."
-    assert resp.language_detected == Language.EN  # "english" mapped to enum
-    assert len(requests) == 1  # no fallback touched
+    assert resp.language_detected == Language.EN  # "english" mapped to the enum
+    (request,) = requests
+    assert request.method == "POST"
+    assert str(request.url) == f"{_BASE}/audio/transcriptions"
+    assert request.headers["Authorization"] == "Bearer stt-key"
+    assert request.headers["Content-Type"].startswith("multipart/form-data")
+    assert request.extensions["timeout"]["read"] == 120.0
+    body = request.read()
+    assert _form_field(body, "model") == b"whisper-test"
+    assert b'name="file"; filename="dream.mp3"' in body
+    assert b"fake-audio" in body
+    assert _form_field(body, "language") is None  # not known: the provider detects it
 
 
-async def test_scaleway_project_id_scopes_the_url(monkeypatch):
-    monkeypatch.setattr(stt.settings, "scaleway_project_id", "proj-123")
-    requests = _install_transport(
-        monkeypatch, lambda request: httpx.Response(200, json={"text": "ok", "language": "english"})
-    )
+async def test_language_is_sent_when_known(monkeypatch):
+    requests = _install_transport(monkeypatch, _ok("de"))
 
-    await stt.transcribe(audio_bytes=b"fake-audio", file_name="dream.mp3")
+    await stt.transcribe(audio_bytes=b"x", file_name="a.wav", language=Language.DE)
 
-    assert str(requests[0].url) == "https://api.scaleway.ai/proj-123/v1/audio/transcriptions"
+    assert _form_field(requests[0].read(), "language") == b"de"
 
 
-async def test_short_language_code_is_mapped(monkeypatch):
+async def test_llm_endpoint_is_used_without_its_own(monkeypatch):
+    monkeypatch.setattr(stt.settings, "stt_base_url", "")
+    monkeypatch.setattr(stt.settings, "stt_api_key", "")
+    requests = _install_transport(monkeypatch, _ok())
+
+    await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
+
+    assert str(requests[0].url) == "https://llm.example.test/v1/audio/transcriptions"
+    assert requests[0].headers["Authorization"] == "Bearer llm-key"
+
+
+async def test_trailing_slash_in_the_base_url(monkeypatch):
+    monkeypatch.setattr(stt.settings, "stt_base_url", _BASE + "/")
+    requests = _install_transport(monkeypatch, _ok())
+
+    await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
+
+    assert str(requests[0].url) == f"{_BASE}/audio/transcriptions"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"language": "en"}, Language.EN),
+        ({"language": "english"}, Language.EN),
+        ({"language": "English"}, Language.EN),
+        ({"language": "en-US"}, Language.EN),
+        ({"language": "de"}, Language.DE),
+        ({"language": "german"}, Language.DE),
+        ({"language": "deutsch"}, Language.DE),
+        ({"language": " DE "}, Language.DE),
+        ({"language": "de_DE"}, Language.DE),
+        ({"language": "fr"}, None),
+        ({"language": None}, None),
+        ({"language": 7}, None),
+        ({}, None),
+        # OpenAI's gpt-transcribe reports a list of detected languages.
+        ({"languages": [{"code": "de"}]}, Language.DE),
+        ({"languages": []}, None),
+    ],
+)
+async def test_detected_language_is_mapped(monkeypatch, payload, expected):
     _install_transport(
-        monkeypatch,
-        lambda request: httpx.Response(
-            200, json={"text": "Ich wurde durch einen Wald gejagt.", "language": "de"}
-        ),
+        monkeypatch, lambda request: httpx.Response(200, json={"text": "t", **payload})
     )
 
     resp = await stt.transcribe(audio_bytes=b"x", file_name="a.wav")
 
-    assert resp.language_detected == Language.DE
+    assert resp.language_detected == expected
 
 
-async def test_hard_4xx_falls_back_without_retry(monkeypatch):
-    """A 404 (e.g. model EOL'd) must not burn a retry — straight to Mistral."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "api.scaleway.ai":
-            return httpx.Response(404, text="model not found")
-        assert request.url.host == "api.mistral.ai"
-        assert request.headers["Authorization"] == "Bearer mst-test"
-        assert stt.settings.voxtral_stt_model.encode() in request.read()
-        return httpx.Response(200, json={"text": "fallback text", "language": "en"})
-
-    requests = _install_transport(monkeypatch, handler)
-
-    resp = await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
-
-    assert resp.text == "fallback text"
-    assert [r.url.host for r in requests] == ["api.scaleway.ai", "api.mistral.ai"]
+# --- failures ---------------------------------------------------------------
 
 
-async def test_transient_5xx_retries_then_falls_back(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "api.scaleway.ai":
-            return httpx.Response(500, text="boom")
-        return httpx.Response(200, json={"text": "ok"})
+@pytest.mark.parametrize("status", [400, 401, 404, 413, 422])
+async def test_hard_4xx_is_raised_at_once(monkeypatch, status):
+    """Bad key, unknown model, unsupported format: no retry."""
+    requests = _install_transport(
+        monkeypatch, lambda request: httpx.Response(status, text="model not found")
+    )
 
-    requests = _install_transport(monkeypatch, handler)
+    with pytest.raises(LlmUnavailableError, match=f"STT {status}"):
+        await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
 
-    resp = await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
-
-    assert resp.text == "ok"
-    hosts = [r.url.host for r in requests]
-    assert hosts == ["api.scaleway.ai", "api.scaleway.ai", "api.mistral.ai"]
-
-
-async def test_missing_scaleway_key_uses_fallback(monkeypatch):
-    monkeypatch.setattr(stt.settings, "scaleway_api_key", "")
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "api.mistral.ai"
-        return httpx.Response(200, json={"text": "ok"})
-
-    requests = _install_transport(monkeypatch, handler)
-
-    resp = await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
-    assert resp.text == "ok"
     assert len(requests) == 1
 
 
-async def test_both_providers_down_raises_unavailable(monkeypatch):
+def _fail(status: int | None):
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, text="down")
+        if status is None:
+            raise httpx.ConnectError("refused", request=request)
+        return httpx.Response(status, text="busy")
 
-    _install_transport(monkeypatch, handler)
+    return handler
+
+
+@pytest.mark.parametrize("status", [429, 500, 503, None])  # None: connection error
+async def test_transient_error_is_retried_once_and_recovers(monkeypatch, status):
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return _fail(status)(request) if len(calls) == 1 else _ok()(request)
+
+    requests = _install_transport(monkeypatch, handler)
+
+    resp = await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
+
+    assert resp.text == "I was chased through a forest."
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize("status", [429, 503, None])
+async def test_exhausted_retries_raise_unavailable(monkeypatch, status):
+    requests = _install_transport(monkeypatch, _fail(status))
 
     with pytest.raises(LlmUnavailableError):
         await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
 
+    assert len(requests) == stt._ATTEMPTS == 2
+
+
+async def test_a_success_without_json_is_unavailable(monkeypatch):
+    _install_transport(monkeypatch, lambda request: httpx.Response(200, text="<html>"))
+
+    with pytest.raises(LlmUnavailableError, match="no JSON"):
+        await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
+
+
+@pytest.mark.parametrize("payload", [["x"], "text", 7])
+async def test_a_success_without_a_json_object_is_unavailable(monkeypatch, payload):
+    """Not an AttributeError: the backend logs that as an unexpected AI error."""
+    requests = _install_transport(monkeypatch, lambda request: httpx.Response(200, json=payload))
+
+    with pytest.raises(LlmUnavailableError, match="no JSON object"):
+        await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "off",
+    [{"stt_model": ""}, {"stt_base_url": "", "llm_base_url": ""}],
+)
+async def test_switched_off_sends_nothing(monkeypatch, off):
+    for name, value in off.items():
+        monkeypatch.setattr(stt.settings, name, value)
+    requests = _install_transport(monkeypatch, _ok())
+
+    assert not stt.settings.stt_enabled
+    with pytest.raises(LlmUnavailableError, match="speech input is off"):
+        await stt.transcribe(audio_bytes=b"x", file_name="a.mp3")
+    assert requests == []
+
+
+# --- entry point --------------------------------------------------------------
+
 
 async def test_entry_point_raises_unavailable(monkeypatch):
-    """Both providers down: the backend's ai_client turns this into AIServiceError."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, text="down")
-
-    _install_transport(monkeypatch, handler)
+    """The provider down: the backend's ai_client turns this into AIServiceError."""
+    _install_transport(monkeypatch, lambda request: httpx.Response(503, text="down"))
 
     with pytest.raises(LlmUnavailableError):
         await audio.transcribe(file_name="dream.mp3", audio_bytes=b"fake-audio")
 
 
 async def test_entry_point_happy_path(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"text": "hello", "language": "en"})
-
-    _install_transport(monkeypatch, handler)
+    _install_transport(
+        monkeypatch, lambda request: httpx.Response(200, json={"text": "hello", "language": "en"})
+    )
 
     resp = await audio.transcribe(file_name="dream.mp3", audio_bytes=b"fake-audio")
     body = resp.model_dump(mode="json")

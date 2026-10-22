@@ -25,9 +25,24 @@ os.environ.setdefault("LLM_BASE_URL", "http://llm.invalid/v1")
 os.environ.setdefault("LLM_API_KEY", "dummy")
 os.environ.setdefault("LLM_MODEL", "m-large")
 os.environ.setdefault("LLM_SMALL_MODEL", "m-small")
-# STT/TTS still read the provider keys (until S09).
-os.environ.setdefault("SCALEWAY_API_KEY", "test-dummy-key")
-os.environ.setdefault("MISTRAL_API_KEY", "test-dummy-key")
+# Speech is off unless a test switches it on; a local .env may configure it.
+os.environ.update(
+    dict.fromkeys(
+        (
+            "STT_BASE_URL",
+            "STT_API_KEY",
+            "STT_MODEL",
+            "TTS_BASE_URL",
+            "TTS_API_KEY",
+            "TTS_MODEL",
+            "TTS_VOICE",
+            "TTS_VOICE_EN",
+            "TTS_VOICE_DE",
+        ),
+        "",
+    )
+)
+os.environ["TTS_API_STYLE"] = "openai"
 os.environ["SAFETY_CRITIC_ENABLED"] = "true"
 os.environ["LLM_JSON_MODE"] = "true"
 
@@ -58,6 +73,10 @@ class FakeAiClient:
 
     Default behaviour (queue empty) for `safety_classify` is `risk=none` —
     that's the common case and keeps tests focused on the interesting paths.
+
+    Speech is off (`stt_enabled` / `tts_enabled` False), as with no STT_MODEL /
+    TTS_MODEL: the audio routes answer 503. The `voice_on` fixture switches
+    both halves on.
     """
 
     def __init__(self) -> None:
@@ -67,6 +86,8 @@ class FakeAiClient:
         self._transcribe: list[dict[str, Any]] = []
         self._rehearsal: list[dict[str, Any]] = []
         self.calls: list[dict[str, Any]] = []
+        self.stt_enabled = False
+        self.tts_enabled = False
 
     def queue_chat(self, response: dict[str, Any]) -> None:
         self._chat.append(response)
@@ -211,6 +232,14 @@ async def fake_user(db_session_maker) -> User:
 @pytest.fixture
 def fake_ai() -> FakeAiClient:
     return FakeAiClient()
+
+
+@pytest.fixture
+def voice_on(fake_ai: FakeAiClient) -> FakeAiClient:
+    """Speech configured: transcription and rehearsal audio switched on."""
+    fake_ai.stt_enabled = True
+    fake_ai.tts_enabled = True
+    return fake_ai
 
 
 @pytest.fixture

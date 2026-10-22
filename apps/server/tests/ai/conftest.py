@@ -17,9 +17,24 @@ os.environ.setdefault("LLM_BASE_URL", "http://llm.invalid/v1")
 os.environ.setdefault("LLM_API_KEY", "dummy")
 os.environ.setdefault("LLM_MODEL", "m-large")
 os.environ.setdefault("LLM_SMALL_MODEL", "m-small")
-# STT/TTS still read the provider keys (until S09): throwaway values here too.
-os.environ.setdefault("SCALEWAY_API_KEY", "test-dummy-key")
-os.environ.setdefault("MISTRAL_API_KEY", "test-dummy-key")
+# Speech is off unless a test switches it on; a local .env may configure it.
+os.environ.update(
+    dict.fromkeys(
+        (
+            "STT_BASE_URL",
+            "STT_API_KEY",
+            "STT_MODEL",
+            "TTS_BASE_URL",
+            "TTS_API_KEY",
+            "TTS_MODEL",
+            "TTS_VOICE",
+            "TTS_VOICE_EN",
+            "TTS_VOICE_DE",
+        ),
+        "",
+    )
+)
+os.environ["TTS_API_STYLE"] = "openai"
 # A local .env may switch these off; tests run with the production defaults.
 os.environ["SAFETY_CRITIC_ENABLED"] = "true"
 os.environ["LLM_JSON_MODE"] = "true"

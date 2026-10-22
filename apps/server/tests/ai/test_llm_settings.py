@@ -52,10 +52,19 @@ def test_defaults():
     assert fields["llm_reasoning_effort"].default == "low"
     assert fields["llm_reasoning_extra_tokens"].default == 2048
     assert fields["safety_critic_enabled"].default is True
-    # The per-provider chat settings are gone; STT/TTS keep theirs (S09).
+    # The per-provider settings are gone, for chat and for speech (STT_*/TTS_*).
     assert "scaleway_safety_model" not in fields
     assert "mistral_safety_model" not in fields
-    assert {"mistral_api_key", "scaleway_api_key", "scaleway_project_id"} <= set(fields)
+    assert not {
+        "mistral_api_key",
+        "scaleway_api_key",
+        "scaleway_project_id",
+        "whisper_stt_model",
+        "voxtral_stt_model",
+        "voxtral_tts_model",
+        "voxtral_voice_id_en",
+        "voxtral_voice_id_de",
+    } & set(fields)
 
 
 def test_llm_configured_needs_the_endpoint_the_key_and_both_models():

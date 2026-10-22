@@ -3,12 +3,35 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Named wherever a missing chat endpoint is reported (503, readiness log, errors).
 LLM_REQUIRED = "LLM_BASE_URL, LLM_API_KEY, LLM_MODEL and LLM_SMALL_MODEL"
+
+# Named wherever switched-off speech is reported (readiness log, errors).
+STT_REQUIRED = "STT_MODEL (and STT_BASE_URL/STT_API_KEY or LLM_BASE_URL/LLM_API_KEY)"
+TTS_REQUIRED = (
+    "TTS_MODEL, TTS_VOICE or TTS_VOICE_EN and TTS_VOICE_DE "
+    "(and TTS_BASE_URL/TTS_API_KEY or LLM_BASE_URL/LLM_API_KEY)"
+)
+
+# The languages rehearsal audio is rendered in (models.Language); TTS is on
+# only while each has a voice.
+TTS_LANGUAGES = ("en", "de")
+
+
+def _host(url: str) -> str:
+    """Host and port of `url`, lower-cased ("" for an empty or bare value)."""
+    return urlsplit(url.strip()).netloc.lower()
+
+
+def _borrows_llm_key(own_key: str, base: str, llm_base: str) -> bool:
+    """True when an empty speech key falls back to LLM_API_KEY although the
+    speech endpoint is on another host than LLM_BASE_URL."""
+    return bool(not own_key.strip() and base and _host(base) != _host(llm_base))
 
 
 class Settings(BaseSettings):
@@ -49,28 +72,25 @@ class Settings(BaseSettings):
     # warning when the core is built.
     safety_critic_enabled: bool = True
 
-    # STT/TTS provider keys (S09 replaces them).
-    mistral_api_key: str = Field(default="", description="Mistral API key (fallback path)")
-    scaleway_api_key: str = Field(default="", description="Scaleway API key (primary path)")
-    # Needed when the key is restricted to a project other than the
-    # organization's default one; empty = default project.
-    scaleway_project_id: str = ""
+    # Speech input (voice journaling): multipart POST {base}/audio/transcriptions.
+    # Empty base URL / key = LLM_BASE_URL / LLM_API_KEY; empty model = off.
+    stt_base_url: str = ""
+    stt_api_key: str = ""
+    stt_model: str = ""
 
-    # Pinned model IDs (ADR 0010 — never floating aliases for prod models).
-    # Speech v3: the German preset needs it; speech v1 (voxtral-mini-tts-2603)
-    # rejects it (2026-10-21).
-    voxtral_tts_model: str = "voxtral-mini-tts-3-0"
-    # STT (ADR 0010, 2026-07-09 amendment): Whisper on Scaleway primary,
-    # Voxtral Transcribe V2 on direct Mistral fallback. The Scaleway ID format
-    # (org/model:quant) is verbatim from their audio how-to docs.
-    whisper_stt_model: str = "openai/whisper-large-v3:fp16"
-    voxtral_stt_model: str = "voxtral-mini-2602"
-
-    # TTS needs a voice: a preset slug (GET /v1/audio/voices) or a saved
-    # voice id. German: the preset "Heidi" (added 2026-10-19), verified to
-    # transcribe back word for word (2026-10-21).
-    voxtral_voice_id_en: str = "gb_jane_neutral"
-    voxtral_voice_id_de: str = "voice_481"
+    # Speech output (rehearsal audio): POST {base}/audio/speech, in the request
+    # and response shape of TTS_API_STYLE. Empty base URL / key = LLM_*; empty
+    # model = off. TTS_VOICE serves every language unless TTS_VOICE_<LANG>
+    # overrides it; off as well while a language has no voice. Another
+    # TTS_API_STYLE than openai/mistral stops startup, as a bad
+    # LLM_REASONING_EFFORT does: a typo fails loudly, not as silent "off".
+    tts_base_url: str = ""
+    tts_api_key: str = ""
+    tts_model: str = ""
+    tts_api_style: Literal["openai", "mistral"] = "openai"
+    tts_voice: str = ""
+    tts_voice_en: str = ""
+    tts_voice_de: str = ""
 
     supabase_url: str = ""
     supabase_service_role_key: str = ""
@@ -100,10 +120,76 @@ class Settings(BaseSettings):
         """The model names listed in LLM_REASONING_MODELS."""
         return frozenset(m.strip() for m in self.llm_reasoning_models.split(",") if m.strip())
 
+    @property
+    def stt_base(self) -> str:
+        """The STT endpoint's base URL: STT_BASE_URL, else LLM_BASE_URL."""
+        return (self.stt_base_url.strip() or self.llm_base_url.strip()).rstrip("/")
+
+    @property
+    def stt_key(self) -> str:
+        """STT_API_KEY, else LLM_API_KEY — on LLM_BASE_URL's host only: the
+        LLM key is never sent to another provider."""
+        if self.stt_api_key.strip():
+            return self.stt_api_key.strip()
+        return "" if self.stt_borrows_llm_key else self.llm_api_key.strip()
+
+    @property
+    def stt_borrows_llm_key(self) -> bool:
+        """True when STT_API_KEY is empty and STT_BASE_URL is on another host
+        than LLM_BASE_URL: LLM_API_KEY is then not used, so transcription stays
+        off (warned about in log_readiness)."""
+        return _borrows_llm_key(self.stt_api_key, self.stt_base, self.llm_base_url)
+
+    @property
+    def stt_enabled(self) -> bool:
+        """True once STT_MODEL is set and a base URL and a key resolve."""
+        return bool(self.stt_model.strip() and self.stt_base and self.stt_key)
+
+    @property
+    def tts_base(self) -> str:
+        """The TTS endpoint's base URL: TTS_BASE_URL, else LLM_BASE_URL."""
+        return (self.tts_base_url.strip() or self.llm_base_url.strip()).rstrip("/")
+
+    @property
+    def tts_key(self) -> str:
+        """TTS_API_KEY, else LLM_API_KEY — on LLM_BASE_URL's host only (see
+        stt_key)."""
+        if self.tts_api_key.strip():
+            return self.tts_api_key.strip()
+        return "" if self.tts_borrows_llm_key else self.llm_api_key.strip()
+
+    @property
+    def tts_borrows_llm_key(self) -> bool:
+        """True when TTS_API_KEY is empty and TTS_BASE_URL is on another host
+        than LLM_BASE_URL: speech output then stays off (see stt_borrows_llm_key)."""
+        return _borrows_llm_key(self.tts_api_key, self.tts_base, self.llm_base_url)
+
+    def tts_voice_for(self, language: str) -> str:
+        """The voice for `language` ("en", "de"): TTS_VOICE_<LANG>, else TTS_VOICE."""
+        override = {"en": self.tts_voice_en, "de": self.tts_voice_de}.get(language, "")
+        return override.strip() or self.tts_voice.strip()
+
+    @property
+    def tts_enabled(self) -> bool:
+        """True once TTS_MODEL is set, a base URL and a key resolve, and every
+        supported language has a voice."""
+        return bool(
+            self.tts_model.strip()
+            and self.tts_base
+            and self.tts_key
+            and all(self.tts_voice_for(lang) for lang in TTS_LANGUAGES)
+        )
+
     @field_validator("llm_reasoning_effort", mode="before")
     @classmethod
     def _normalize_reasoning_effort(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("tts_api_style", mode="before")
+    @classmethod
+    def _normalize_tts_api_style(cls, value: object) -> object:
+        # TTS_API_STYLE= (empty) means the default, like the other speech keys.
+        return (value.strip().lower() or "openai") if isinstance(value, str) else value
 
     @field_validator("rehearsal_url_ttl_seconds", mode="before")
     @classmethod
