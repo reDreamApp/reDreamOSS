@@ -1,9 +1,10 @@
 name: CI
 
-# Gates (docs/ROADMAP.md item 1): tests for all three apps, lint for apps/ai
-# and the Flutter analyzer (both fully green). apps/api lint (ruff / mypy) is
-# RED AT BASELINE — it runs as an informational step (continue-on-error) until
-# the dedicated cleanup pass, so CI is meaningful instead of permanently red.
+# Gates (docs/ROADMAP.md item 1): tests for the server and the app, lint for
+# redream_ai and the Flutter analyzer (both fully green). redream_api lint
+# (ruff / mypy) is RED AT BASELINE — it runs as an informational step
+# (continue-on-error) until the dedicated cleanup pass, so CI is meaningful
+# instead of permanently red.
 
 on:
   pull_request:
@@ -18,12 +19,12 @@ permissions:
   contents: read
 
 jobs:
-  ai:
-    name: apps/ai — pytest + ruff + mypy
+  server:
+    name: apps/server — pytest + ruff + mypy (redream_api lint informational)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/ai
+        working-directory: apps/server
     steps:
       - uses: actions/checkout@v4
       # setup-uv stopped publishing floating major tags in v8 — pin exactly.
@@ -32,27 +33,13 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen
       - run: uv run pytest -q
-      - run: uv run ruff check .
-      - run: uv run mypy src
-
-  api:
-    name: apps/api — pytest (lint informational)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/api
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8.2.0
-        with:
-          enable-cache: true
-      - run: uv sync --frozen
-      - run: uv run pytest -q
-      - name: ruff (informational — red baseline, see docs/ROADMAP.md)
-        run: uv run ruff check .
+      - run: uv run ruff check src/redream_ai tests/ai evals
+      - run: uv run mypy src/redream_ai
+      - name: ruff redream_api (informational — red baseline, see docs/ROADMAP.md)
+        run: uv run ruff check src/redream_api tests/api
         continue-on-error: true
-      - name: mypy (informational — red baseline, see docs/ROADMAP.md)
-        run: uv run mypy src
+      - name: mypy redream_api (informational — red baseline, see docs/ROADMAP.md)
+        run: uv run mypy src/redream_api
         continue-on-error: true
 
   migrations:

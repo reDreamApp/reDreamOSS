@@ -42,7 +42,7 @@ Decided 2026-07-02. Two long-lived branches, one release gate:
   "First deploy") — Supabase running and `deploy.env` in place.
 - Auth (`auth.*`) is Supabase-managed and works regardless of branch wiring;
   only `public.*` schema depends on migrations reaching the DB.
-- `apps/api` tests don't need any of this (in-memory SQLite from the ORM
+- `apps/server` tests don't need any of this (in-memory SQLite from the ORM
   models) — which is exactly why a missing migration surfaces only in a real
   environment. When you add a column to a model, the migration belongs in the
   same commit.

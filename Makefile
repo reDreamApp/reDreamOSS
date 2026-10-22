@@ -7,35 +7,32 @@ SHELL := /bin/bash
 help: ## show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-# ---- ai service ---------------------------------------------------------
+# ---- server: ai side (apps/server, redream_ai) --------------------------
 
-.PHONY: ai-dev ai-test ai-lint ai-fmt
-ai-dev: ## run AI service locally on :8080
-	cd apps/ai && uv run uvicorn redream_ai.main:app --reload --port 8080
+.PHONY: ai-test ai-lint ai-fmt
+ai-test: ## run AI-side tests (redream_ai)
+	cd apps/server && uv run pytest tests/ai
 
-ai-test: ## run AI service tests
-	cd apps/ai && uv run pytest
+ai-lint: ## lint AI side (redream_ai)
+	cd apps/server && uv run ruff check src/redream_ai tests/ai evals && uv run mypy src/redream_ai
 
-ai-lint: ## lint AI service
-	cd apps/ai && uv run ruff check . && uv run mypy src
+ai-fmt: ## format AI side (redream_ai)
+	cd apps/server && uv run ruff format src/redream_ai tests/ai evals && uv run ruff check --fix src/redream_ai tests/ai evals
 
-ai-fmt: ## format AI service
-	cd apps/ai && uv run ruff format . && uv run ruff check --fix .
-
-# ---- api (backend) ------------------------------------------------------
+# ---- server: api side (apps/server, redream_api) ------------------------
 
 .PHONY: api-dev api-test api-lint api-fmt
-api-dev: ## run backend locally on :8001
-	cd apps/api && uv run uvicorn redream_api.main:app --reload --port 8001
+api-dev: ## run the server (backend + in-process AI) locally on :8001
+	cd apps/server && uv run $(if $(wildcard apps/server/.env),--env-file .env,) uvicorn redream_api.main:app --reload --port 8001
 
 api-test: ## run backend tests
-	cd apps/api && uv run pytest
+	cd apps/server && uv run pytest tests/api
 
 api-lint: ## lint backend
-	cd apps/api && uv run ruff check . && uv run mypy src
+	cd apps/server && uv run ruff check src/redream_api tests/api && uv run mypy src/redream_api
 
 api-fmt: ## format backend
-	cd apps/api && uv run ruff format . && uv run ruff check --fix .
+	cd apps/server && uv run ruff format src/redream_api tests/api && uv run ruff check --fix src/redream_api tests/api
 
 # ---- flutter app --------------------------------------------------------
 

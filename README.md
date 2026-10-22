@@ -6,8 +6,7 @@ A self-help companion app for working with difficult dreams: record a dream, rei
 
 ```
 apps/
-  ai/        Python FastAPI (stateless): chat, safety classifier, TTS, STT
-  api/       Python FastAPI + async SQLAlchemy: source of truth for users, chats, dreams
+  server/    Python FastAPI, one process: redream_api (async SQLAlchemy, source of truth for users, chats, dreams) + redream_ai (chat, safety classifier, TTS, STT), called in-process
   app/       Flutter (version pinned in apps/app/.fvmrc): iOS + Android client, EN + DE
 
 supabase/
@@ -28,9 +27,9 @@ docs/
 ```
 Flutter app
    ↓ HTTPS + SSE (Caddy)
-apps/api  ← source of truth (chats, dreams, safety events, daily mood)
-   ↓ HTTPS
-apps/ai   ← stateless: receives full history, returns next IRT stage + response
+apps/server  redream_api ← source of truth (chats, dreams, safety events, daily mood)
+   ↓ in-process
+             redream_ai  ← stateless: receives full history, returns next IRT stage + response
    ↓
 Scaleway Generative APIs (chat, speech-to-text), Mistral (fallback, text-to-speech)
 ```
@@ -40,8 +39,7 @@ Scaleway Generative APIs (chat, speech-to-text), Mistral (fallback, text-to-spee
 ```bash
 cp apps/app/.env.example apps/app/.env   # the app bundles .env as an asset; needed before build/test
 make help                  # list everything
-make ai-dev                # run AI service locally on :8080
-make api-dev               # run backend on :8001
+make api-dev               # run the server (backend + AI) on :8001
 make app-run               # flutter run via FVM
 make test                  # all test suites
 make up                    # full local stack via docker compose
