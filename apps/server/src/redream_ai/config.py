@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Named wherever a missing chat endpoint is reported (503, readiness log, errors).
@@ -21,6 +21,23 @@ TTS_REQUIRED = (
 # The languages rehearsal audio is rendered in (models.Language); TTS is on
 # only while each has a voice.
 TTS_LANGUAGES = ("en", "de")
+
+# Where help is found, as the chat model names it when a user is in real
+# present distress: inserted into the scope boundary of every stage prompt
+# (irt_app.scope_boundary). Neutral: no country's numbers.
+HELPLINE_PROMPT_EN_DEFAULT = (
+    "in an emergency the local emergency number, otherwise a free crisis line in "
+    "their country, listed at findahelpline.com"
+)
+HELPLINE_PROMPT_DE_DEFAULT = (
+    "im Notfall die örtliche Notrufnummer, sonst ein kostenloses Krisentelefon in "
+    "seinem Land, zu finden unter findahelpline.com"
+)
+HELPLINE_PROMPT_MAX_LEN = 200
+_HELPLINE_PROMPT_DEFAULTS = {
+    "helpline_prompt_en": HELPLINE_PROMPT_EN_DEFAULT,
+    "helpline_prompt_de": HELPLINE_PROMPT_DE_DEFAULT,
+}
 
 
 def _host(url: str) -> str:
@@ -71,6 +88,11 @@ class Settings(BaseSettings):
     # The rewriting stage's SafetyCritic. false runs chat without it and logs a
     # warning when the core is built.
     safety_critic_enabled: bool = True
+    # The help reference the chat model names on real distress, per prompt
+    # language. Blank = the neutral default; one line of at most
+    # HELPLINE_PROMPT_MAX_LEN characters, or startup fails.
+    helpline_prompt_en: str = HELPLINE_PROMPT_EN_DEFAULT
+    helpline_prompt_de: str = HELPLINE_PROMPT_DE_DEFAULT
 
     # Speech input (voice journaling): multipart POST {base}/audio/transcriptions.
     # Empty base URL / key = LLM_BASE_URL / LLM_API_KEY; empty model = off.
@@ -190,6 +212,25 @@ class Settings(BaseSettings):
     def _normalize_tts_api_style(cls, value: object) -> object:
         # TTS_API_STYLE= (empty) means the default, like the other speech keys.
         return (value.strip().lower() or "openai") if isinstance(value, str) else value
+
+    @field_validator("helpline_prompt_en", "helpline_prompt_de", mode="before")
+    @classmethod
+    def _helpline_prompt(cls, value: object, info: ValidationInfo) -> object:
+        if not isinstance(value, str):
+            return value
+        field = info.field_name or ""
+        text = value.strip()
+        if not text:
+            # HELPLINE_PROMPT_DE= left blank in .env means the default, not "".
+            return _HELPLINE_PROMPT_DEFAULTS[field]
+        name = field.upper()
+        if "\n" in text or "\r" in text:
+            raise ValueError(f"{name} must be a single line")
+        if len(text) > HELPLINE_PROMPT_MAX_LEN:
+            raise ValueError(
+                f"{name} is {len(text)} characters; at most {HELPLINE_PROMPT_MAX_LEN} are allowed"
+            )
+        return text
 
     @field_validator("rehearsal_url_ttl_seconds", mode="before")
     @classmethod

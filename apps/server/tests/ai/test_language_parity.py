@@ -21,11 +21,10 @@ from redream_ai.core import agent as core_agent
 from redream_ai.core import irt_app
 from redream_ai.core.models import Conversation
 from redream_ai.core.prompts import (
+    HELPLINE_REFERENCE,
     NIGHTMARE_SUMMARY_PROMPT_DE,
     NIGHTMARE_SUMMARY_PROMPT_EN,
     ROUTING_PROMPT,
-    SCOPE_BOUNDARY_DE,
-    SCOPE_BOUNDARY_EN,
     SYSTEM_PROMPT_TEMPLATES_DE,
     SYSTEM_PROMPT_TEMPLATES_EN,
 )
@@ -33,9 +32,10 @@ from redream_ai.models import Language
 
 ROUTED_STAGES = ("recording", "rewriting", "summary", "final")
 
+# The scope boundary as composed at call time (HELPLINE_PROMPT_* inserted).
 LANG_CASES = [
-    pytest.param("de", SCOPE_BOUNDARY_DE, SYSTEM_PROMPT_TEMPLATES_DE, id="de"),
-    pytest.param("en", SCOPE_BOUNDARY_EN, SYSTEM_PROMPT_TEMPLATES_EN, id="en"),
+    pytest.param("de", irt_app.scope_boundary(False), SYSTEM_PROMPT_TEMPLATES_DE, id="de"),
+    pytest.param("en", irt_app.scope_boundary(True), SYSTEM_PROMPT_TEMPLATES_EN, id="en"),
 ]
 
 
@@ -96,6 +96,7 @@ async def test_response_prompt_selection_honours_language(
     assert response == "Antwort"
     system_prompt = stub.calls[0]["system_prompt"]
     assert system_prompt.startswith(boundary)  # scope boundary prepended, same language
+    assert HELPLINE_REFERENCE not in system_prompt
     assert templates[stage] in system_prompt
     other = SYSTEM_PROMPT_TEMPLATES_EN if lang == "de" else SYSTEM_PROMPT_TEMPLATES_DE
     assert other[stage] not in system_prompt
@@ -111,7 +112,7 @@ async def test_safety_constraint_is_appended_after_boundary_and_template(monkeyp
     )
 
     assert stub.calls[0]["system_prompt"] == (
-        SCOPE_BOUNDARY_EN
+        irt_app.scope_boundary(True)
         + "\n\n"
         + SYSTEM_PROMPT_TEMPLATES_EN["rewriting"]
         + "\n\n"
@@ -136,6 +137,7 @@ async def test_stream_prompt_selection_honours_explicit_language(
 
     system_prompt = stub.calls[0]["system_prompt"]
     assert system_prompt.startswith(boundary)
+    assert HELPLINE_REFERENCE not in system_prompt
     assert templates["summary"] in system_prompt
     assert out[0] == ("chunk", None)
     assert out[-1] == ("", {"input": 1, "output": 1, "total": 2})

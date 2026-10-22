@@ -6,7 +6,8 @@ import logging
 import json
 from .prompts import (SYSTEM_PROMPT_TEMPLATES_DE, SYSTEM_PROMPT_TEMPLATES_EN,
                       NIGHTMARE_SUMMARY_PROMPT_DE, NIGHTMARE_SUMMARY_PROMPT_EN,
-                      SCOPE_BOUNDARY_DE, SCOPE_BOUNDARY_EN,
+                      SCOPE_BOUNDARY_DE, SCOPE_BOUNDARY_EN, HELPLINE_REFERENCE,
+                      INTRO_MESSAGE_DE, INTRO_MESSAGE_EN,
                       SAFETY_NOTE_INTRO_DE, SAFETY_NOTE_INTRO_EN,
                       SAFETY_NOTE_STYLE_DE, SAFETY_NOTE_STYLE_EN,
                       RECORDING_ENOUGH_NOTE_DE, RECORDING_ENOUGH_NOTE_EN,
@@ -191,12 +192,10 @@ async def process_chat_message_stream(
             safety_result = await evaluate_safety(chat_input.message, conversation)
 
         history = conversation.get_history_as_string()
-        intro_message_de = "AI: Ich bin hier, um dir zu helfen, deine Albträume zu bewältigen und sie in positivere Erfahrungen zu verwandeln.\\nNimm dir Zeit, deinen Albtraum so detailliert wie möglich zu beschreiben. Wenn du fertig bist, werde ich hier sein, um dir Anleitung und Unterstützung zu bieten, während wir ihn gemeinsam in eine positivere Erzählung umwandeln."
-        intro_message_en = "AI: I'm here to help you work through your nightmares and turn them into more positive experiences.\\nTake your time to describe your nightmare in as much detail as you can. When you're ready, I'll be here to guide and support you as we reshape it together into a more empowering story."
 
         is_english = (conversation.language == "en")
         templates = SYSTEM_PROMPT_TEMPLATES_EN if is_english else SYSTEM_PROMPT_TEMPLATES_DE
-        intro_message = intro_message_en if is_english else intro_message_de
+        intro_message = INTRO_MESSAGE_EN if is_english else INTRO_MESSAGE_DE
 
         # Prepend intro message to the history string used for the prompt
         history_for_prompt = intro_message + "\\n" + history if history else intro_message
@@ -583,6 +582,17 @@ async def evaluate_safety(user_input: str, conversation: Conversation):
         return None
 
 
+def scope_boundary(is_english: bool) -> str:
+    """The scope boundary in the prompt language, with HELPLINE_PROMPT_EN /
+    HELPLINE_PROMPT_DE read now (not at import) in place of HELPLINE_REFERENCE.
+
+    Plain replacement, never str.format: prompt and operator text may hold braces.
+    """
+    if is_english:
+        return SCOPE_BOUNDARY_EN.replace(HELPLINE_REFERENCE, settings.helpline_prompt_en)
+    return SCOPE_BOUNDARY_DE.replace(HELPLINE_REFERENCE, settings.helpline_prompt_de)
+
+
 @observe(name="get_response", as_type="generation", capture_input=False, capture_output=False)
 async def get_response_async(stage: str, user_input: str, conversation: Conversation, safety_constraint: Optional[str] = None) -> Tuple[str, dict]:
     """Async version of get_response"""
@@ -597,12 +607,10 @@ async def get_response_async(stage: str, user_input: str, conversation: Conversa
     )
     
     history = conversation.get_history_as_string()
-    intro_message_de = "AI: Ich bin hier, um dir zu helfen, deine Albträume zu bewältigen und sie in positivere Erfahrungen zu verwandeln.\\nNimm dir Zeit, deinen Albtraum so detailliert wie möglich zu beschreiben. Wenn du fertig bist, werde ich hier sein, um dir Anleitung und Unterstützung zu bieten, während wir ihn gemeinsam in eine positivere Erzählung umwandeln."
-    intro_message_en = "AI: I'm here to help you work through your nightmares and turn them into more positive experiences.\\nTake your time to describe your nightmare in as much detail as you can. When you're ready, I'll be here to guide and support you as we reshape it together into a more empowering story."
 
     is_english = (conversation.language == "en")
     templates = SYSTEM_PROMPT_TEMPLATES_EN if is_english else SYSTEM_PROMPT_TEMPLATES_DE
-    intro_message = intro_message_en if is_english else intro_message_de
+    intro_message = INTRO_MESSAGE_EN if is_english else INTRO_MESSAGE_DE
 
     # Prepend intro message to the history string used for the prompt
     history_for_prompt = intro_message + "\\n" + history if history else intro_message
@@ -612,7 +620,7 @@ async def get_response_async(stage: str, user_input: str, conversation: Conversa
 
     # Prepend the scope/boundary guardrail to every stage so the bot stays within
     # the IRT method (no diagnosis / no acting as a confidant; distress → redirect).
-    boundary = SCOPE_BOUNDARY_EN if is_english else SCOPE_BOUNDARY_DE
+    boundary = scope_boundary(is_english)
     base_prompt = boundary + "\n\n" + prompt_template
     if safety_constraint:
         composed_system_prompt = base_prompt + "\n\n" + safety_constraint
@@ -646,7 +654,7 @@ async def get_response_stream_async(stage: str, full_prompt: str, conversation: 
     templates = SYSTEM_PROMPT_TEMPLATES_EN if is_english else SYSTEM_PROMPT_TEMPLATES_DE
     prompt_template = templates[stage]
     # Prepend the scope/boundary guardrail (see get_response_async).
-    boundary = SCOPE_BOUNDARY_EN if is_english else SCOPE_BOUNDARY_DE
+    boundary = scope_boundary(is_english)
     base_prompt = boundary + "\n\n" + prompt_template
     if safety_constraint:
         composed_system_prompt = base_prompt + "\n\n" + safety_constraint

@@ -45,6 +45,11 @@ os.environ.update(
 os.environ["TTS_API_STYLE"] = "openai"
 os.environ["SAFETY_CRITIC_ENABLED"] = "true"
 os.environ["LLM_JSON_MODE"] = "true"
+# A local .env may set an operator's helpline; tests use the neutral defaults.
+os.environ["HELPLINE_TEXT_EN"] = ""
+os.environ["HELPLINE_TEXT_DE"] = ""
+os.environ["HELPLINE_PROMPT_EN"] = ""
+os.environ["HELPLINE_PROMPT_DE"] = ""
 
 import pytest
 from httpx import ASGITransport, AsyncClient

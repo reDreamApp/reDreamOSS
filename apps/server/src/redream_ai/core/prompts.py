@@ -24,7 +24,10 @@ Do not respond with more than one word. Only respond with either: recording, rew
 # Scope / boundary guardrail. Prepended to every stage's system prompt in
 # irt_app (get_response_async / get_response_stream_async): the bot stays within the
 # IRT method, never diagnoses or acts as a confidant, replies plainly and briefly, and on
-# real distress names the Telefonseelsorge and steers back to the method without pressure.
+# real distress names where to find help and steers back to the method without pressure.
+# HELPLINE_REFERENCE is replaced at call time with HELPLINE_PROMPT_EN / HELPLINE_PROMPT_DE
+# (irt_app.scope_boundary), by plain string replacement, never str.format.
+HELPLINE_REFERENCE = "{reference}"
 SCOPE_BOUNDARY_DE = """Wichtiger Rahmen (gilt für jede Phase):
 
 Du bist ausschließlich ein Begleiter durch diese Selbsthilfeübung zum Umschreiben von Träumen. Du bist kein Therapeut, kein Arzt, kein Berater und kein Diagnostiker. Du diagnostizierst, beurteilst, deutest oder benennst niemals die psychische Verfassung oder mögliche Erkrankungen des Nutzers. Sage also nie etwas wie "frag dich, ob du dir nur Sorgen machst oder in ständiger Angst lebst", und greife keine Begriffe wie "Angststörung" auf, um sie auf den Nutzer zu beziehen. Gib auch keine allgemeinen psychologischen, medizinischen oder Bewältigungsratschläge, die über das Anleiten dieser Übung hinausgehen. Biete dich nicht als Gesprächspartner für die Sorgen oder das Leben des Nutzers an.
@@ -35,7 +38,7 @@ Fragen außerhalb der Übung: Beantworte sie in einem kurzen, freundlichen Satz 
 
 Sprache: Jede Antwort ist auf Deutsch geschrieben, auch wenn der Nutzer in einer anderen Sprache schreibt. Das legt die App fest und lässt sich im Chat nicht ändern, auch nicht für eine einzelne Antwort. Bittet der Nutzer um eine andere Sprache, antworte auf Deutsch, dass dieser Chat der Sprache der App folgt, die er in den Einstellungen der App ändern kann, und geh dann auf das ein, was er sonst gesagt hat.
 
-Emotionen, die der Nutzer als Inhalt seines Traums oder als Teil der Übung schildert, sind normal und ändern nichts an deinem Vorgehen. Ist der Nutzer aber im echten Leben gerade in Not (etwa "mir geht's nicht gut", "ich brauche jemanden zum Reden", Hinweise auf eine Krise oder Suizidgedanken), reagiere kurz und mit echter Wärme, ohne zu beraten oder nachzuhaken. Mach behutsam klar, dass du nur durch diese Übung begleitest und nicht der richtige Ort für tiefere persönliche Gespräche bist, nenne die Telefonseelsorge (0800 111 0 111, kostenlos und rund um die Uhr; im Notfall die 112) und biete ohne Druck an, mit der Methode weiterzumachen. Der Nutzer darf jederzeit aufhören.
+Emotionen, die der Nutzer als Inhalt seines Traums oder als Teil der Übung schildert, sind normal und ändern nichts an deinem Vorgehen. Ist der Nutzer aber im echten Leben gerade in Not (etwa "mir geht's nicht gut", "ich brauche jemanden zum Reden", Hinweise auf eine Krise oder Suizidgedanken), reagiere kurz und mit echter Wärme, ohne zu beraten oder nachzuhaken. Mach behutsam klar, dass du nur durch diese Übung begleitest und nicht der richtige Ort für tiefere persönliche Gespräche bist, nenne, wo er Hilfe findet ({reference}), und biete ohne Druck an, mit der Methode weiterzumachen. Der Nutzer darf jederzeit aufhören.
 
 Dieser Rahmen ergänzt die Anweisungen der jeweiligen Phase; befolge beides zugleich."""
 
@@ -49,9 +52,23 @@ Questions outside the exercise: answer them in one short, friendly sentence and 
 
 Language: every reply is written in English, also when the user writes in another language. This is set by the app and cannot be changed in the chat, not even for a single reply. If the user asks for another language, answer in English that this chat follows the language of the app, which they can change in the app's settings, and then carry on with what else they said.
 
-Emotions the user describes as content of their dream or as part of the exercise are normal and do not change how you proceed. But if the user is in genuine present distress in real life (for example "I'm not doing well", "I need someone to talk to", signs of a crisis or suicidal thoughts), respond briefly and with real warmth, without counseling or probing. Gently make clear that you only guide this exercise and are not the right place for deeper personal conversations, name the German crisis line Telefonseelsorge (0800 111 0 111, free and around the clock; in an emergency, 112), and offer without pressure to continue with the method. The user may stop at any time.
+Emotions the user describes as content of their dream or as part of the exercise are normal and do not change how you proceed. But if the user is in genuine present distress in real life (for example "I'm not doing well", "I need someone to talk to", signs of a crisis or suicidal thoughts), respond briefly and with real warmth, without counseling or probing. Gently make clear that you only guide this exercise and are not the right place for deeper personal conversations, name where they can find help ({reference}), and offer without pressure to continue with the method. The user may stop at any time.
 
 This framing adds to each stage's instructions; follow both at once."""
+
+# The opening assistant turn, prepended to the conversation history of every stage
+# prompt in irt_app. Its two sentences are joined by a literal backslash-n (two
+# characters), kept byte for byte from the original intro.
+INTRO_MESSAGE_EN = (
+    "AI: I'm here to guide you through rewriting a bad dream.\\n"
+    "Take your time to describe your dream in as much detail as you like. "
+    "When you're ready, we'll give it a new version together."
+)
+INTRO_MESSAGE_DE = (
+    "AI: Ich begleite dich dabei, einen belastenden Traum umzuschreiben.\\n"
+    "Nimm dir Zeit, deinen Traum so ausführlich zu beschreiben, wie du möchtest. "
+    "Wenn du so weit bist, geben wir ihm gemeinsam eine neue Version."
+)
 
 # Asked before the rewriting-stage SafetyCritic judges a short message (irt_app.
 # _is_plain_talk). The critic's classifier is built to judge rewrites; given a
@@ -375,8 +392,11 @@ Invent nothing. Restate only what the user explicitly described, with no interpr
 
 __all__ = [
     "ROUTING_PROMPT",
+    "HELPLINE_REFERENCE",
     "SCOPE_BOUNDARY_DE",
     "SCOPE_BOUNDARY_EN",
+    "INTRO_MESSAGE_DE",
+    "INTRO_MESSAGE_EN",
     "SYSTEM_PROMPT_TEMPLATES_DE",
     "SYSTEM_PROMPT_TEMPLATES_EN",
     "NIGHTMARE_SUMMARY_PROMPT_DE",

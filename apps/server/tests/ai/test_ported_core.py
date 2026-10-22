@@ -51,11 +51,16 @@ def test_summary_labels_rewritten_before_original():
     assert de.index("Umgeschriebener Traum:") < de.index("Ursprünglicher Traum:")
 
 
-def test_crisis_line_present_in_scope_boundary():
-    from redream_ai.core.prompts import SCOPE_BOUNDARY_DE, SCOPE_BOUNDARY_EN
+def test_help_reference_present_in_scope_boundary():
+    # The distress clause names where to find help: one placeholder per language,
+    # filled with HELPLINE_PROMPT_EN / HELPLINE_PROMPT_DE when the prompt is built.
+    from redream_ai.config import settings
+    from redream_ai.core.prompts import HELPLINE_REFERENCE, SCOPE_BOUNDARY_DE, SCOPE_BOUNDARY_EN
+
     for boundary in (SCOPE_BOUNDARY_DE, SCOPE_BOUNDARY_EN):
-        assert "0800 111 0 111" in boundary
-        assert "112" in boundary
+        assert boundary.count(HELPLINE_REFERENCE) == 1
+    assert settings.helpline_prompt_en in irt_app.scope_boundary(True)
+    assert settings.helpline_prompt_de in irt_app.scope_boundary(False)
 
 
 # --- §5 confidence gate (regression trap) --------------------------------------

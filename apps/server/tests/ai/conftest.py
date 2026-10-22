@@ -41,6 +41,9 @@ os.environ["LLM_JSON_MODE"] = "true"
 os.environ["LLM_REASONING_MODELS"] = ""
 os.environ["LLM_REASONING_EFFORT"] = "low"
 os.environ["LLM_REASONING_EXTRA_TOKENS"] = "2048"
+# A local .env may set an operator's helpline reference; tests use the defaults.
+os.environ["HELPLINE_PROMPT_EN"] = ""
+os.environ["HELPLINE_PROMPT_DE"] = ""
 
 import pytest
 

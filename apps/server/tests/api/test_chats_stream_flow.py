@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 
+from redream_api.core.config import HELPLINE_TEXT_EN_DEFAULT
+
 from .conftest import start_chat
 
 # A final frame as the AI service emits it: the full ChatResponse JSON.
@@ -116,7 +118,8 @@ async def test_stream_high_risk_short_circuits(client, fake_ai, db_session_maker
 
     assert "user_message" in frames[0]
     assert frames[1]["safety_event"]["risk"] == "high"
-    assert frames[1]["safety_event"]["message"]  # localized helpline text
+    # Localized helpline text (HELPLINE_TEXT_EN, here its default).
+    assert frames[1]["safety_event"]["message"] == HELPLINE_TEXT_EN_DEFAULT
     assert frames[2] == "[DONE]"
     assert len(frames) == 3
     # No AI turn ran, and the stage did not advance (ADR 0005).

@@ -7,6 +7,7 @@ import logging
 import pytest
 from sqlalchemy import select
 
+from redream_api.core.config import HELPLINE_TEXT_EN_DEFAULT
 from redream_api.db.models.chat_message import ChatMessage
 from redream_api.services.ai_client import AIServiceError
 
@@ -40,7 +41,8 @@ async def test_high_risk_input_skips_chat_and_flags_message(
     assert body["safety_event"]["risk"] == "high"
     assert body["safety_event"]["categories"] == ["suicidal_ideation"]
     assert body["safety_event"]["confidence"] == 0.92
-    assert body["safety_event"]["message"], "helpline text must be returned (ADR 0005)"
+    # Helpline text must be returned (ADR 0005): HELPLINE_TEXT_EN, here its default.
+    assert body["safety_event"]["message"] == HELPLINE_TEXT_EN_DEFAULT
     assert body["stage"] == "recording", "stage must NOT advance on high-risk"
 
     # Verify the AI service's /chat was not called.

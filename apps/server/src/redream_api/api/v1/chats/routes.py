@@ -57,26 +57,6 @@ router = APIRouter(prefix="/chats", tags=["chats"])
 
 _TITLE_MAX_LEN = 60
 
-# Helpline text returned with a high-risk safety event (ADR 0005). The client
-# renders this in place of the AI reply.
-_HELPLINE_MESSAGE = {
-    "en": (
-        "It sounds like you might be going through something serious. "
-        "This app is a self-help tool and can't provide crisis support. "
-        "Please reach out to someone who can help right now: in Germany, the "
-        "TelefonSeelsorge is available 24/7 at 0800 111 0 111 or 0800 111 0 222 "
-        "(free and anonymous). If you are in immediate danger, call 112."
-    ),
-    "de": (
-        "Es klingt, als würdest du gerade etwas Ernstes durchmachen. "
-        "Diese App ist ein Selbsthilfe-Tool und kann keine Krisenhilfe leisten. "
-        "Bitte wende dich an Menschen, die dir jetzt helfen können: Die "
-        "TelefonSeelsorge ist rund um die Uhr erreichbar unter 0800 111 0 111 "
-        "oder 0800 111 0 222 (kostenlos und anonym). In akuter Gefahr ruf bitte "
-        "die 112 an."
-    ),
-}
-
 # Matches the first standalone 0-10 in an intensity-stage user message
 # ("8", "8/10", "It is an 8 out of 10."). This parses USER input, not AI
 # output — the ADR 0003 ban on string-matching AI responses doesn't apply.
@@ -317,7 +297,9 @@ async def _pre_turn(
             risk="high",
             categories=list(safety.get("categories", [])),
             confidence=float(safety.get("confidence", 0.0)),
-            message=_HELPLINE_MESSAGE.get(chat.language, _HELPLINE_MESSAGE["en"]),
+            # HELPLINE_TEXT_EN / HELPLINE_TEXT_DE; the client renders it
+            # in place of the AI reply.
+            message=settings.helpline_text_for(chat.language),
         )
 
     return _TurnSetup(
