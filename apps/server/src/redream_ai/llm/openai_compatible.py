@@ -2,7 +2,12 @@
 
 It serves the crisis classifier (ADR 0005). The backend blocks the chat turn
 while the check runs, so a failing endpoint must surface quickly: one retry
-and the caller's timeout (LLM_SAFETY_TIMEOUT_SECONDS in production).
+and the caller's timeout (LLM_SAFETY_TIMEOUT_SECONDS in production). The
+request is shaped and sent by `chat_request` like every other chat call: a
+reasoning model gets no temperature, a parameter the endpoint rejects as
+unsupported is adjusted and the request sent again, a reasoning model's
+answer left empty by the token limit is logged, and content that comes as a
+list of chunks (Mistral's reasoning models) is read as its text.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import httpx
 import openai
 
 from .base import LlmUnavailableError, StreamChunk
+from .chat_request import answer_text, build_chat_request, create_chat_completion
 
 
 class OpenAICompatibleLlmClient:
@@ -40,7 +46,7 @@ class OpenAICompatibleLlmClient:
 
     async def _create(self, kwargs: dict[str, Any]) -> Any:
         try:
-            return await self._client.chat.completions.create(**kwargs)
+            return await create_chat_completion(self._client, kwargs)
         except (
             openai.RateLimitError,
             openai.InternalServerError,
@@ -59,21 +65,17 @@ class OpenAICompatibleLlmClient:
         response_format: dict[str, Any] | None = None,
         reasoning_effort: str | None = None,
     ) -> tuple[str, dict[str, int]]:
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        if response_format is not None:
-            kwargs["response_format"] = response_format
-        if reasoning_effort is not None:
-            kwargs["reasoning_effort"] = reasoning_effort
-
+        kwargs = build_chat_request(
+            model,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            reasoning_effort=reasoning_effort,
+        )
         response = await self._create(kwargs)
         # Some endpoints leave out the usage block or the content.
-        content = response.choices[0].message.content or ""
+        content = answer_text(response.choices[0].message.content)
         usage = response.usage
         return content, {
             "input_tokens": (usage.prompt_tokens or 0) if usage else 0,
@@ -89,23 +91,20 @@ class OpenAICompatibleLlmClient:
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        if reasoning_effort is not None:
-            kwargs["reasoning_effort"] = reasoning_effort
-
+        kwargs = build_chat_request(
+            model,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+        )
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
         stream = await self._create(kwargs)
         async for chunk in stream:
             choice = chunk.choices[0] if chunk.choices else None
             delta = choice.delta if choice is not None else None
-            out: StreamChunk = {"text": (delta.content or "") if delta is not None else ""}
+            out: StreamChunk = {"text": answer_text(delta.content) if delta is not None else ""}
             if choice is not None and choice.finish_reason:
                 out["finish_reason"] = choice.finish_reason
             if chunk.usage is not None:

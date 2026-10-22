@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
 import logging
 from ..config import LLM_REQUIRED, settings
+from ..llm.chat_request import answer_text, build_chat_request, create_chat_completion
 from .prompts import ROUTING_PROMPT
 # Create a specific logger for prompts
 prompt_logger = logging.getLogger("prompts")
@@ -75,10 +76,6 @@ class LogprobsResult:
         """Convert mean logprob to a 0-1 confidence score."""
         return math.exp(self.mean_logprob) if self.tokens else 0.0
 
-# Models that use max_completion_tokens instead of max_tokens
-# Includes both bare (gpt-5) and vendor-prefixed (openai/gpt-5) names
-NEW_API_MODELS = ("gpt-5", "o1", "o3", "openai/gpt-5", "openai/o1", "openai/o3")
-
 
 class Agent:
     def __init__(
@@ -93,8 +90,6 @@ class Agent:
         self.system_prompt = system_prompt
         self.temperature = temperature
         self.max_tokens = max_tokens
-        # Check if this model uses the new API parameter names
-        self._uses_new_api = self._model_uses_new_api(self.model)
         self.client = build_client()
 
         # Optional fallback model on the same endpoint. When the primary model fails
@@ -103,16 +98,14 @@ class Agent:
         # transparently retry the same prompt on it. Nothing in the app configures one.
         self.fallback_model: Optional[str] = fallback_model
         self.fallback_client = self.client if fallback_model is not None else None
-        self._fallback_uses_new_api = fallback_model is not None and self._model_uses_new_api(fallback_model)
 
-    @staticmethod
-    def _model_uses_new_api(model_name: str) -> bool:
-        return any(model_name.startswith(prefix) for prefix in NEW_API_MODELS)
-
-    def _build_request_kwargs(self, model, uses_new_api, prompt, stream=False, system_prompt=None, response_format=None):
+    def _build_request_kwargs(self, model, prompt, stream=False, system_prompt=None, response_format=None):
         """Assemble the chat.completions.create kwargs for a given model.
 
         Never asks for logprobs: not every OpenAI-compatible endpoint supports them.
+        A reasoning model gets no temperature, max_completion_tokens (the
+        limit plus LLM_REASONING_EXTRA_TOKENS) and LLM_REASONING_EFFORT
+        (redream_ai.llm.chat_request).
 
         ``system_prompt`` overrides ``self.system_prompt`` for this call only — used
         to pass a per-request composed system prompt instead of mutating the shared
@@ -121,37 +114,33 @@ class Agent:
         — used by the summary structured-extraction pass (ADR 0003).
         """
         effective_system_prompt = system_prompt if system_prompt is not None else self.system_prompt
-        request_kwargs = {
-            "model": model,
-            "messages": [
+        request_kwargs = build_chat_request(
+            model,
+            [
                 {"role": "system", "content": effective_system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": self.temperature,
-        }
-        if response_format is not None:
-            request_kwargs["response_format"] = response_format
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            response_format=response_format,
+        )
         if stream:
             request_kwargs["stream"] = True
-        # Use appropriate token limit parameter based on model
-        if uses_new_api:
-            request_kwargs["max_completion_tokens"] = self.max_tokens
-        else:
-            request_kwargs["max_tokens"] = self.max_tokens
         return request_kwargs
 
     async def _create_with_retries(self, client, request_kwargs):
         """Call chat.completions.create, retrying transient network/server errors.
 
         Some endpoints occasionally drop connections under sustained
-        sequential load (seen in consistency-mode benchmarks).
+        sequential load (seen in consistency-mode benchmarks). A parameter the
+        endpoint rejects is adjusted by create_chat_completion.
         """
         TRANSIENT_EXCS = (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError)
         max_attempts = 4
         delay = 1.0
         for attempt in range(max_attempts):
             try:
-                return await client.chat.completions.create(**request_kwargs)
+                return await create_chat_completion(client, request_kwargs)
             except TRANSIENT_EXCS as e:
                 if attempt == max_attempts - 1:
                     raise
@@ -189,7 +178,7 @@ class Agent:
             log_prompt(effective_system_prompt, prompt, self.model)
 
             primary_kwargs = self._build_request_kwargs(
-                self.model, self._uses_new_api, prompt,
+                self.model, prompt,
                 system_prompt=effective_system_prompt, response_format=response_format
             )
             try:
@@ -202,14 +191,14 @@ class Agent:
                     f"Falling back to '{self.fallback_model}'."
                 )
                 fallback_kwargs = self._build_request_kwargs(
-                    self.fallback_model, self._fallback_uses_new_api,
+                    self.fallback_model,
                     prompt, system_prompt=effective_system_prompt,
                     response_format=response_format
                 )
                 response = await self._create_with_retries(self.fallback_client, fallback_kwargs)
 
             usage = _usage_dict(getattr(response, "usage", None))
-            return response.choices[0].message.content or "", usage, None
+            return answer_text(response.choices[0].message.content), usage, None
 
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
@@ -224,7 +213,7 @@ class Agent:
             usage = {"input": 0, "output": 0, "total": 0}
 
             primary_kwargs = self._build_request_kwargs(
-                self.model, self._uses_new_api, prompt, stream=True, system_prompt=system_prompt
+                self.model, prompt, stream=True, system_prompt=system_prompt
             )
             try:
                 stream = await self._create_with_retries(self.client, primary_kwargs)
@@ -236,7 +225,7 @@ class Agent:
                     f"Falling back to '{self.fallback_model}'."
                 )
                 fallback_kwargs = self._build_request_kwargs(
-                    self.fallback_model, self._fallback_uses_new_api,
+                    self.fallback_model,
                     prompt, stream=True, system_prompt=system_prompt
                 )
                 stream = await self._create_with_retries(self.fallback_client, fallback_kwargs)
@@ -244,13 +233,15 @@ class Agent:
             # Closes the provider's HTTP response as soon as this generator is
             # closed (client gone mid-stream), not whenever GC gets to it. A failing
             # close is swallowed: it must never replace GeneratorExit/CancelledError.
+            # (A reasoning model's answer left empty by the token limit is
+            # logged by the stream itself: chat_request.)
             try:
                 async for chunk in stream:
                     if chunk_usage := getattr(chunk, "usage", None):
                         usage = _usage_dict(chunk_usage)
                     # Usage-only or keep-alive chunks come with no choices (or no delta).
                     delta = getattr(chunk.choices[0], "delta", None) if chunk.choices else None
-                    if content := getattr(delta, "content", None):
+                    if content := answer_text(getattr(delta, "content", None)):
                         yield content, None, None
             finally:
                 with contextlib.suppress(Exception):

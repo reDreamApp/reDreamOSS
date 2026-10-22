@@ -1,8 +1,8 @@
 """LLM_* settings: one OpenAI-compatible endpoint for every text role.
 
 Pins the defaults, `llm_configured` / `safety_model`, SAFETY_CRITIC_ENABLED,
-LLM_JSON_MODE at the request level, which model each role runs on, and that no
-request the AI side sends ever asks for logprobs. Offline: a fake endpoint
+LLM_JSON_MODE and LLM_REASONING_* at the request level, which model each role
+runs on, and that no request the AI side sends ever asks for logprobs. Offline: a fake endpoint
 stands in behind every Agent, an httpx.MockTransport behind the crisis client.
 """
 
@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from redream_ai import summary_structured
 from redream_ai.api.safety import safety_classify
@@ -47,6 +48,9 @@ def test_defaults():
     assert fields["llm_timeout_seconds"].default == 60
     assert fields["llm_safety_timeout_seconds"].default == 20
     assert fields["llm_json_mode"].default is True
+    assert fields["llm_reasoning_models"].default == ""
+    assert fields["llm_reasoning_effort"].default == "low"
+    assert fields["llm_reasoning_extra_tokens"].default == 2048
     assert fields["safety_critic_enabled"].default is True
     # The per-provider chat settings are gone; STT/TTS keep theirs (S09).
     assert "scaleway_safety_model" not in fields
@@ -82,6 +86,37 @@ def test_values_come_from_the_environment(monkeypatch):
     assert s.llm_timeout_seconds == 30
     assert s.llm_safety_timeout_seconds == 5.5
     assert s.safety_model == "guard"
+
+
+def test_reasoning_settings_from_the_environment(monkeypatch):
+    monkeypatch.setenv("LLM_REASONING_MODELS", " thinker , other-thinker,, ")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", " Medium ")
+    monkeypatch.setenv("LLM_REASONING_EXTRA_TOKENS", "4096")
+
+    s = Settings(_env_file=None)
+
+    assert s.reasoning_models == {"thinker", "other-thinker"}
+    assert s.llm_reasoning_effort == "medium"
+    assert s.llm_reasoning_extra_tokens == 4096
+    assert Settings(_env_file=None, llm_reasoning_models="").reasoning_models == frozenset()
+
+
+@pytest.mark.parametrize("effort", ["", "minimal", "low", "medium", "high"])
+def test_reasoning_effort_values(effort):
+    assert Settings(_env_file=None, llm_reasoning_effort=effort).llm_reasoning_effort == effort
+
+
+@pytest.mark.parametrize("effort", ["max", "none", "xhigh", "1"])
+def test_unknown_reasoning_effort_is_refused(effort):
+    with pytest.raises(ValidationError, match="llm_reasoning_effort"):
+        Settings(_env_file=None, llm_reasoning_effort=effort)
+
+
+def test_reasoning_extra_tokens_values(monkeypatch):
+    assert Settings(_env_file=None, llm_reasoning_extra_tokens=0).llm_reasoning_extra_tokens == 0
+    monkeypatch.setenv("LLM_REASONING_EXTRA_TOKENS", "-1")
+    with pytest.raises(ValidationError, match="llm_reasoning_extra_tokens"):
+        Settings(_env_file=None)
 
 
 # --- SAFETY_CRITIC_ENABLED ---------------------------------------------------------
@@ -289,3 +324,106 @@ async def test_json_mode_decides_response_format(endpoint, monkeypatch, json_mod
             assert request["response_format"] == {"type": "json_object"}
         else:
             assert "response_format" not in request
+
+
+# --- reasoning models ------------------------------------------------------------
+
+
+async def _every_role(endpoint: _Endpoint, monkeypatch) -> list[dict[str, Any]]:
+    """Every request a rewriting turn (plain and streamed), the summary
+    extraction and a crisis check send; the crisis body comes last."""
+    await irt_app.process_chat_message(_turn(), _conversation())
+    async for _ in irt_app.process_chat_message_stream(_turn(), _conversation()):
+        pass
+    await summary_structured.extract_summary_structured("Title: T", Language.EN)
+    assert any(r.get("stream") for r in endpoint.requests)
+    return [*endpoint.requests, *await _crisis_bodies(monkeypatch)]
+
+
+@pytest.mark.parametrize("extra", [0, 2048, 4096])
+async def test_regular_models_get_the_parameters_they_always_got(endpoint, monkeypatch, extra):
+    # LLM_REASONING_EXTRA_TOKENS is for reasoning models only.
+    monkeypatch.setattr(settings, "llm_reasoning_extra_tokens", extra)
+
+    *agent_requests, crisis = await _every_role(endpoint, monkeypatch)
+
+    # The rewrite-safety segmenter and classifier decode greedily.
+    temperature = {"segmenter": 0, "classifier": 0}
+    for request in agent_requests:
+        role = endpoint.role(request)
+        expected = {
+            "model": request["model"],
+            "messages": request["messages"],
+            "temperature": temperature.get(role, 0.1),
+            "max_tokens": 1024,
+        }
+        if role == "extraction":
+            expected["response_format"] = {"type": "json_object"}
+        if request.get("stream"):
+            expected["stream"] = True
+        assert request == expected, role
+    assert crisis == {
+        "model": "small-model",
+        "messages": crisis["messages"],
+        "temperature": 0.0,
+        "response_format": {"type": "json_object"},
+    }
+
+
+_ROLES = {
+    "routing",
+    "talk_gate",
+    "replay_check",
+    "segmenter",
+    "classifier",
+    "nightmare_summary",
+    "reply",
+    "extraction",
+}
+
+
+@pytest.mark.parametrize("effort", ["low", "high", ""])
+async def test_reasoning_models_on_every_role(endpoint, monkeypatch, effort):
+    monkeypatch.setattr(settings, "llm_reasoning_models", "big-model,small-model")
+    monkeypatch.setattr(settings, "llm_reasoning_effort", effort)
+
+    *agent_requests, crisis = await _every_role(endpoint, monkeypatch)
+
+    assert {endpoint.role(r) for r in agent_requests} == _ROLES
+    for request in [*agent_requests, crisis]:
+        assert "temperature" not in request
+        assert "top_p" not in request
+        assert "max_tokens" not in request
+        if effort:
+            assert request["reasoning_effort"] == effort
+        else:
+            assert "reasoning_effort" not in request
+    for request in agent_requests:
+        # The core's limit plus LLM_REASONING_EXTRA_TOKENS (2048) for the reasoning.
+        assert request["max_completion_tokens"] == 1024 + 2048
+    # The crisis check sets no token limit; JSON mode stays on where it was asked.
+    assert "max_completion_tokens" not in crisis
+    assert crisis["response_format"] == {"type": "json_object"}
+    (extraction,) = [r for r in agent_requests if endpoint.role(r) == "extraction"]
+    assert extraction["response_format"] == {"type": "json_object"}
+
+
+async def test_reasoning_is_decided_per_model(endpoint, monkeypatch):
+    monkeypatch.setattr(settings, "llm_reasoning_models", "small-model")
+    monkeypatch.setattr(settings, "llm_reasoning_extra_tokens", 0)
+
+    *requests, crisis = await _every_role(endpoint, monkeypatch)
+
+    for request in requests:
+        if request["model"] == "small-model":
+            assert "temperature" not in request
+            assert request["reasoning_effort"] == "low"
+            # LLM_REASONING_EXTRA_TOKENS=0: the core's limit as it is.
+            assert request["max_completion_tokens"] == 1024
+        else:
+            assert request["temperature"] == 0.1
+            assert request["max_tokens"] == 1024
+            assert "reasoning_effort" not in request
+    assert {r["model"] for r in requests} == {"small-model", "big-model"}
+    assert crisis["model"] == "small-model"
+    assert "temperature" not in crisis

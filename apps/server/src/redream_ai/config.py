@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -32,6 +34,17 @@ class Settings(BaseSettings):
     # Send response_format json_object; off for endpoints that reject it (the
     # answers are then parsed out of prose or code fences).
     llm_json_mode: bool = True
+    # Reasoning models, comma-separated, on top of the ones known by name
+    # (o1, o3, o4, gpt-5 ...). They get no temperature, max_completion_tokens
+    # instead of max_tokens, and LLM_REASONING_EFFORT.
+    llm_reasoning_models: str = ""
+    # reasoning_effort sent to reasoning models ("minimal": gpt-5 family only);
+    # empty = not sent (the provider's default).
+    llm_reasoning_effort: Literal["", "minimal", "low", "medium", "high"] = "low"
+    # Added to a reasoning model's token limit: its reasoning counts against
+    # max_completion_tokens, so the core's limits alone could leave no room for
+    # the answer. A cap, not a charge; 0 = none.
+    llm_reasoning_extra_tokens: int = Field(default=2048, ge=0)
     # The rewriting stage's SafetyCritic. false runs chat without it and logs a
     # warning when the core is built.
     safety_critic_enabled: bool = True
@@ -81,6 +94,16 @@ class Settings(BaseSettings):
     def safety_model(self) -> str:
         """The crisis classifier's model: LLM_SAFETY_MODEL, else LLM_SMALL_MODEL."""
         return self.llm_safety_model or self.llm_small_model
+
+    @property
+    def reasoning_models(self) -> frozenset[str]:
+        """The model names listed in LLM_REASONING_MODELS."""
+        return frozenset(m.strip() for m in self.llm_reasoning_models.split(",") if m.strip())
+
+    @field_validator("llm_reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
 
     @field_validator("rehearsal_url_ttl_seconds", mode="before")
     @classmethod
