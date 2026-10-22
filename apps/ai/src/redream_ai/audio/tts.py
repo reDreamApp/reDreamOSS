@@ -21,7 +21,7 @@ accepts. A new voice changes the hash, so a dream gets new audio in it.
 
 Privacy: Scaleway has no TTS, so the rewritten dream (Art. 9 content) goes to
 Mistral La Plateforme (30-day abuse-monitoring retention until ZDR is
-granted). Not traced to Langfuse.
+granted).
 """
 
 from __future__ import annotations

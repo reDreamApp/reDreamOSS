@@ -16,7 +16,6 @@ import os
 # clobber these, so the real .env keys never leak into the test process.
 os.environ.setdefault("SCALEWAY_API_KEY", "test-dummy-key")
 os.environ.setdefault("MISTRAL_API_KEY", "test-dummy-key")
-os.environ.setdefault("LANGFUSE_ENABLED", "false")
 
 import pytest
 

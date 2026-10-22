@@ -124,7 +124,6 @@ def _ported_input(req: ChatRequest, conversation: PortedConversation) -> PortedC
     return PortedChatInput(
         session_id=conversation.session_id,
         message=req.messages[-1].content,
-        user_id=req.user_id,
         language_override=req.language.value,
     )
 

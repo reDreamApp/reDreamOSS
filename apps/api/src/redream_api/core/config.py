@@ -69,10 +69,6 @@ class Settings(BaseSettings):
     # docs/ROADMAP.md tracks the re-enable gate.
     safety_classifier_enabled: bool = True
 
-    # Langfuse's own database (ADR 0007). Only the GDPR purge uses it, to
-    # delete a user's traces: Langfuse v2 has no API for that. Empty = skip.
-    langfuse_database_url: str = ""
-
     # Runtime
     log_level: str = "INFO"
 

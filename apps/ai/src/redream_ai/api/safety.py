@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import observability as obs
 from ..config import settings
 from ..llm.base import LlmClient
 from ..models import SafetyRequest, SafetyResponse
@@ -27,16 +26,7 @@ async def safety_classify(
     if not req.text.strip():
         raise HTTPException(400, "text must not be empty")
 
-    # session_id groups the trace with its chat; user_id makes it reachable by
-    # the backend's GDPR purge (traces contain the user's raw text).
-    trace = obs.start_trace(
-        "safety-classify",
-        session_id=req.session_id,
-        user_id=req.user_id,
-        input={"text": req.text, "stage": req.stage.value if req.stage else None},
-        metadata={"language": req.language.value},
-    )
-    result = await classify(
+    return await classify(
         llm=llm,
         model=settings.scaleway_safety_model,
         fallback_llm=fallback_llm,
@@ -45,14 +35,4 @@ async def safety_classify(
         language=req.language,
         stage=req.stage,
         context=req.context,
-        trace=trace,
     )
-    obs.update_trace(
-        trace,
-        output={
-            "risk": result.risk.value,
-            "categories": [c.value for c in result.categories],
-            "confidence": result.confidence,
-        },
-    )
-    return result

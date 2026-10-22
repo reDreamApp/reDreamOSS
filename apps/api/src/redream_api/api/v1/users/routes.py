@@ -14,7 +14,6 @@ from ....db.models.user import User
 from ....db.repositories.consent_repo import ConsentRepo
 from ....db.repositories.user_repo import UserRepo
 from ....services.auth_service import delete_login
-from ....services.langfuse_service import delete_user_traces
 from ....services.storage_service import delete_rehearsal_audio_for_user
 
 log = logging.getLogger(__name__)
@@ -95,7 +94,7 @@ async def delete_me(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete the account: app data, rehearsal audio, traces, then the login.
+    """Delete the account: app data, rehearsal audio, then the login.
 
     Deleting the `users` row cascades to dreams, chats and the rest. The
     Supabase login goes last: if that fails the answer is 503 and the user is
@@ -104,7 +103,6 @@ async def delete_me(
     user_id = user.id
     await UserRepo(db).delete(user_id)
     await delete_rehearsal_audio_for_user(user_id)
-    await delete_user_traces(user_id)
     if not await delete_login(user_id):
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -117,14 +115,13 @@ async def delete_my_data(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """GDPR purge: delete this user's data across Postgres + Storage + Langfuse.
+    """GDPR purge: delete this user's data across Postgres + Storage.
 
     The login stays, so the user can keep using the app with an empty account.
 
-    All three are best-effort and logged independently — a Storage or Langfuse
-    failure does not prevent the Postgres deletion.
+    The Storage purge is best-effort and logged — a Storage failure does not
+    prevent the Postgres deletion.
     """
     user_id = user.id
     await UserRepo(db).delete(user_id)
     await delete_rehearsal_audio_for_user(user_id)
-    await delete_user_traces(user_id)

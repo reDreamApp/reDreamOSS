@@ -117,32 +117,6 @@ def test_rebuild_conversation_excludes_new_message(client, monkeypatch):
     assert captured["stages"] == ["recording"]           # one resolved stage per assistant msg
 
 
-def test_user_id_propagates_to_ported_input(client, monkeypatch):
-    """ChatRequest.user_id must reach ChatInput — irt_app stamps it on the
-    Langfuse trace, which is what makes the GDPR purge able to delete it."""
-    captured = {}
-
-    async def fake(chat_input, conversation, safety_enabled=True):
-        captured["user_id"] = chat_input.user_id
-        conversation.stages.append("recording")
-        return _ported("recording", "ok", conversation.stages)
-
-    monkeypatch.setattr(irt_app, "process_chat_message", fake)
-    client.post("/chat", json={
-        "messages": [{"role": "user", "content": "nightmare"}],
-        "language": "en",
-        "session_id": "7",
-        "user_id": "user-abc",
-    })
-    assert captured["user_id"] == "user-abc"
-
-    # Absent user_id stays None (older callers) — not "" or a stringified None.
-    client.post("/chat", json={
-        "messages": [{"role": "user", "content": "nightmare"}], "language": "en",
-    })
-    assert captured["user_id"] is None
-
-
 def test_last_message_must_be_user(client):
     r = client.post(
         "/chat",

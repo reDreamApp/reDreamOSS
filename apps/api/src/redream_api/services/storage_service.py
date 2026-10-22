@@ -8,7 +8,7 @@ API with the service-role key:
   folder level (sub-folders come back with ``id: null``)
 - ``DELETE /storage/v1/object/{bucket}``       ``{"prefixes": [paths]}``
 
-Best-effort like the Langfuse purge: failures are logged, never raised, so
+Best-effort: failures are logged, never raised, so
 the Postgres deletion (the load-bearing part) always completes.
 """
 

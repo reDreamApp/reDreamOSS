@@ -7,7 +7,6 @@ import logging
 import re
 from typing import Any
 
-from .. import observability as obs
 from ..llm.base import LlmClient
 from ..models import Language, SafetyCategory, SafetyResponse, SafetyRisk, Stage
 from ..prompts.safety import PROMPT_VERSION, SAFETY_PROMPT_DE, SAFETY_PROMPT_EN
@@ -57,7 +56,6 @@ async def classify(
     language: Language,
     stage: Stage | None = None,
     context: str | None = None,
-    trace: obs.Trace = None,
     fallback_llm: LlmClient | None = None,
     fallback_model: str | None = None,
 ) -> SafetyResponse:
@@ -92,7 +90,7 @@ async def classify(
     ]
 
     try:
-        return await _ask(llm, model, messages, trace)
+        return await _ask(llm, model, messages)
     except Exception as exc:
         if fallback_llm is None or fallback_model is None:
             raise
@@ -102,28 +100,16 @@ async def classify(
             exc,
             fallback_model,
         )
-        return await _ask(fallback_llm, fallback_model, messages, trace)
+        return await _ask(fallback_llm, fallback_model, messages)
 
 
-async def _ask(
-    llm: LlmClient, model: str, messages: list[dict[str, Any]], trace: obs.Trace
-) -> SafetyResponse:
-    content, usage = await llm.chat(
+async def _ask(llm: LlmClient, model: str, messages: list[dict[str, Any]]) -> SafetyResponse:
+    content, _usage = await llm.chat(
         model=model,
         messages=messages,
         temperature=0.0,
         response_format=_RESPONSE_FORMAT,
     )
-    obs.record_generation(
-        trace,
-        name="safety-classify",
-        model=model,
-        input=messages,
-        output=content,
-        usage=usage,
-        metadata={"prompt_version": PROMPT_VERSION},
-    )
-
     parsed = json.loads(content)
     return SafetyResponse(
         risk=SafetyRisk(parsed["risk"]),

@@ -12,11 +12,6 @@ dependencies = [
     "httpx>=0.27",
     "python-multipart>=0.0.32",
     "supabase>=2.10",
-    # Pinned to v2 — the SDK is version-coupled to the self-hosted server
-    # (ADR 0007 / infra compose run langfuse/langfuse:2). The v3+ SDK ingests
-    # over an OTel endpoint the v2 server does not expose, so traces silently
-    # drop. If the server is upgraded to v3+, bump this and update observability.py.
-    "langfuse>=2.60,<3",
     # Ported IRT chatbot core (redream_ai/core, redream_ai/clinical_safety):
     # OpenAI-compatible SDK drives Scaleway (primary) + direct Mistral (fallback);
     # groq SDK is referenced by the registry but unused at runtime; networkx builds
@@ -77,11 +72,6 @@ pythonpath = ["src"]
 strict = true
 python_version = "3.12"
 mypy_path = "src"
-
-# Langfuse v2 ships no py.typed marker; the SDK is confined to observability.py.
-[[tool.mypy.overrides]]
-module = ["langfuse.*"]
-ignore_missing_imports = true
 
 # Third-party SDKs used only by the vendored core that ship no type stubs.
 [[tool.mypy.overrides]]

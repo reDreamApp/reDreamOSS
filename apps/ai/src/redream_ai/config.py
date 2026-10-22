@@ -47,13 +47,6 @@ class Settings(BaseSettings):
     # Lifetime of the signed rehearsal-audio URL stored on the dream.
     rehearsal_url_ttl_seconds: int = Field(default=300, ge=60, le=3600)
 
-    langfuse_host: str = ""
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
-    # Explicit off-switch (LANGFUSE_ENABLED=false) for all tracing — helpers and
-    # @observe decorators alike. Tracing is also off whenever host/keys are unset.
-    langfuse_enabled: bool = True
-
     environment: str = "development"
     log_level: str = "INFO"
 
@@ -61,15 +54,6 @@ class Settings(BaseSettings):
     @classmethod
     def _migrate_audio_ttl(cls, value: object) -> object:
         return 300 if isinstance(value, (str, int)) and int(value) > 3600 else value
-
-    @field_validator("langfuse_enabled", mode="before")
-    @classmethod
-    def _empty_means_default(cls, v: object) -> object:
-        # A blank `LANGFUSE_ENABLED=` line (the pattern of every other var in
-        # .env.example) must not fail service boot — treat it as unset.
-        if isinstance(v, str) and not v.strip():
-            return True
-        return v
 
     model_config = SettingsConfigDict(
         env_file=".env",

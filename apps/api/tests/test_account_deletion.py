@@ -88,7 +88,6 @@ def _fake_purges(monkeypatch, *, login_deleted: bool) -> list[str]:
         return run
 
     monkeypatch.setattr(user_routes, "delete_rehearsal_audio_for_user", step("storage", 0))
-    monkeypatch.setattr(user_routes, "delete_user_traces", step("langfuse", True))
     monkeypatch.setattr(user_routes, "delete_login", step("login", login_deleted))
     return order
 
@@ -101,7 +100,7 @@ async def test_account_deletion_removes_the_login_last(
     r = await client.delete("/api/v1/users/me")
 
     assert r.status_code == 204
-    assert order == ["storage", "langfuse", "login"]
+    assert order == ["storage", "login"]
     async with db_session_maker() as session:
         assert await UserRepo(session).get(fake_user.id) is None
 
@@ -125,4 +124,4 @@ async def test_the_data_purge_keeps_the_login(client, monkeypatch):
     r = await client.delete("/api/v1/users/me/data")
 
     assert r.status_code == 204
-    assert order == ["storage", "langfuse"]
+    assert order == ["storage"]

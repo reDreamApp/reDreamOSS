@@ -120,35 +120,6 @@ def test_safety_empty_text_rejected(client):
     assert r.status_code == 400
 
 
-def test_safety_trace_tagged_with_session_and_user(client, monkeypatch):
-    """session_id/user_id must reach the Langfuse trace — the GDPR purge
-    deletes traces by userId, so an untagged trace is an unerasable one."""
-    import redream_ai.observability as obs
-
-    captured = {}
-
-    def fake_start_trace(name, *, session_id=None, user_id=None, **kwargs):
-        captured["session_id"] = session_id
-        captured["user_id"] = user_id
-        return None
-
-    monkeypatch.setattr(obs, "start_trace", fake_start_trace)
-
-    tc, fake = client
-    fake.enqueue(json.dumps({"risk": "none", "categories": [], "confidence": 0.9}))
-    r = tc.post(
-        "/safety/classify",
-        json={
-            "text": "I dreamt of a calm forest.",
-            "language": "en",
-            "session_id": "42",
-            "user_id": "user-abc",
-        },
-    )
-    assert r.status_code == 200
-    assert captured == {"session_id": "42", "user_id": "user-abc"}
-
-
 @pytest.mark.parametrize("text", ["ja", "Yes.", "yes, exactly", "Nein!", "ja genau"])
 def test_bare_answer_skips_the_model(client, text):
     """A plain yes / no is never a risk signal: "Hat er dich gewürgt?" → "ja"

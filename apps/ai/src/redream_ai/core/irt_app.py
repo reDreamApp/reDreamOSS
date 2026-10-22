@@ -21,9 +21,7 @@ from .prompts import (SYSTEM_PROMPT_TEMPLATES_DE, SYSTEM_PROMPT_TEMPLATES_EN,
 # Load environment variables (searches upward from CWD to find project .env)
 load_dotenv(find_dotenv())
 
-# Langfuse decorator API comes from observability (the single SDK entry point).
-# Imported AFTER load_dotenv: observability pulls in config.Settings(), which
-# must see any .env vars injected above (same ordering as the agents below).
+# Tracing decorators: no-op stand-ins (reDreamOSS has no tracing backend).
 from ..observability import langfuse_context, observe  # noqa: E402
 
 # Language detection removed; language is controlled via override from client
@@ -53,15 +51,6 @@ try:
 except Exception as e:
     safety_critic = None
     logger.warning(f"SafetyCritic initialization failed: {e}. Safety checks disabled.")
-
-# Langfuse decorator configuration happens ONCE, settings-gated, in
-# observability.configure_decorators() — which runs AT IMPORT of the
-# observability module (imported above), so the gate is already bound before
-# any @observe call, lifespan or not. The main.lifespan call is an idempotent
-# no-op re-assert. Do NOT defer this to lifespan: without the import-time
-# binding the v2 decorators lazily build an ENABLED client from raw env vars
-# (which never read LANGFUSE_ENABLED) — pinned by
-# tests/test_observability.py::test_observe_gating_binds_without_lifespan.
 
 language = "de"
 

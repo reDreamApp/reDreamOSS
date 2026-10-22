@@ -24,7 +24,6 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -325,11 +324,6 @@ async def _pre_turn(
                 "language": chat.language,
                 "stage": chat.current_stage,
                 "context": last_assistant,
-                # Trace attribution only (never state): session groups the
-                # Langfuse trace with its chat, user_id makes it deletable by
-                # the GDPR purge (`delete_user_traces`).
-                "session_id": str(chat.id),
-                "user_id": str(user.id),
             }
         )
     except AIServiceError as exc:
@@ -370,17 +364,15 @@ async def _pre_turn(
     )
 
 
-def _ai_chat_payload(
-    chat: Chat, history_msgs: list[ChatMessage], *, user_id: UUID
-) -> dict[str, Any]:
+def _ai_chat_payload(chat: Chat, history_msgs: list[ChatMessage]) -> dict[str, Any]:
     """The stateless AI request (ADR 0002): full visible history + echo state.
 
     Safety-flagged messages got a helpline, not an AI turn — replaying them
     into later prompts would re-inject crisis content the flow already
     short-circuited on.
 
-    `session_id`/`user_id` are trace attribution only (never state): they tag
-    the Langfuse trace so the GDPR purge (`delete_user_traces`) can find it.
+    `session_id` is the chat's id; the ported core keys its conversation by it
+    (never state).
     """
     return {
         "messages": [
@@ -395,7 +387,6 @@ def _ai_chat_payload(
         ],
         "language": chat.language,
         "session_id": str(chat.id),
-        "user_id": str(user_id),
         # Echo the once-generated nightmare summary back to the stateless AI
         # so it never regenerates it (None on the first turns is fine).
         "nightmare_summary": chat.nightmare_summary,
@@ -488,7 +479,7 @@ async def send_message(
         )
 
     try:
-        ai_resp = await ai.chat(_ai_chat_payload(chat, setup.history_msgs, user_id=user.id))
+        ai_resp = await ai.chat(_ai_chat_payload(chat, setup.history_msgs))
     except AIServiceError as exc:
         # Drop the just-persisted user message: leaving it orphaned (no AI
         # reply) would replay it into the next turn's history alongside the
@@ -575,7 +566,7 @@ async def _stream_ai_turn(
             return
 
         async for frame in ai.chat_stream(
-            _ai_chat_payload(chat, setup.history_msgs, user_id=user.id)
+            _ai_chat_payload(chat, setup.history_msgs)
         ):
             body = frame.removeprefix("data:").strip()
             if body == "[DONE]":

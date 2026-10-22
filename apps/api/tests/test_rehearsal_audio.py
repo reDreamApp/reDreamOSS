@@ -311,7 +311,7 @@ async def test_deleting_a_dream_deletes_its_audio(client, fake_user, monkeypatch
     assert calls == [(fake_user.id, dream_id)]
 
 
-async def test_account_deletion_purges_storage_and_traces(client, fake_user, monkeypatch):
+async def test_account_deletion_purges_storage_and_login(client, fake_user, monkeypatch):
     from redream_api.api.v1.users import routes as user_routes
 
     calls: dict[str, Any] = {}
@@ -319,19 +319,14 @@ async def test_account_deletion_purges_storage_and_traces(client, fake_user, mon
     async def fake_storage(user_id):
         calls["storage"] = user_id
 
-    async def fake_langfuse(user_id):
-        calls["langfuse"] = user_id
-        return True
-
     async def fake_login(user_id):
         calls["login"] = user_id
         return True
 
     monkeypatch.setattr(user_routes, "delete_rehearsal_audio_for_user", fake_storage)
-    monkeypatch.setattr(user_routes, "delete_user_traces", fake_langfuse)
     monkeypatch.setattr(user_routes, "delete_login", fake_login)
 
     r = await client.delete("/api/v1/users/me")
 
     assert r.status_code == 204
-    assert calls == {"storage": fake_user.id, "langfuse": fake_user.id, "login": fake_user.id}
+    assert calls == {"storage": fake_user.id, "login": fake_user.id}

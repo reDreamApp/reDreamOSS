@@ -43,15 +43,9 @@ def _build_scaleway_llm_client() -> LlmClient | None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import logging
 
-    from . import observability as obs
     from .core import irt_app
 
     log = logging.getLogger("redream_ai.startup")
-
-    # One gated Langfuse setup (ADR 0007): configure the @observe decorator
-    # context from settings. When LANGFUSE_HOST / keys are unset (or
-    # LANGFUSE_ENABLED=false) every decorator is a true no-op — no network.
-    obs.configure_decorators()
 
     # Crisis classifier (ADR 0005): Scaleway primary, direct Mistral fallback.
     app.state.scaleway_llm_client = _build_scaleway_llm_client()
@@ -69,11 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "IRT pipeline ready (agents=ok, safety_critic=%s)",
             "ok" if app.state.safety_ready else "disabled (fail-open)",
         )
-    try:
-        yield
-    finally:
-        # Flush buffered Langfuse events so nothing is lost on shutdown.
-        obs.flush()
+    yield
 
 
 app = FastAPI(

@@ -6,7 +6,7 @@ with the service-role key:
 
 - ``DELETE /auth/v1/admin/users/{user_id}``
 
-Unlike the Storage and Langfuse purges this one reports failure: a login left
+Unlike the Storage purge this one reports failure: a login left
 behind still signs in, so the route has to tell the user to try again.
 """
 

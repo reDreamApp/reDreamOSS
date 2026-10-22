@@ -14,10 +14,6 @@ multipart shape, so one request helper serves both.
 Storage policy: the source audio is NOT persisted. Transcribe, return text,
 discard bytes. If users later want playback of their own narration, that's a
 deliberate scope expansion.
-
-Deliberately NOT traced to Langfuse: the wire request carries no
-user_id/session_id, so a transcript trace would be unerasable by the backend's
-GDPR purge (which deletes traces by userId).
 """
 
 from __future__ import annotations
