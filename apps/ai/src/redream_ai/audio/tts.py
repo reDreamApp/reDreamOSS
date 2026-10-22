@@ -2,7 +2,7 @@
 
 Contract (what the backend's `ai_client.rehearsal_generate` calls):
     POST /rehearsal/generate {dream_id, user_id, rewritten_dream, language}
-    -> {audio_url, script, duration_estimate, voice_id, cache_hit, synthesis_attempts}
+    -> {audio_url, script, duration_estimate, voice_id, cache_hit}
 
 The MP3 gets a Xing header (`mp3.py`, so players report its real length) and
 goes straight to Supabase Storage with the service-role key; the backend only
@@ -74,14 +74,8 @@ async def generate_rehearsal(req: RehearsalRequest) -> RehearsalResponse:
     async with httpx.AsyncClient(timeout=_TIMEOUT, transport=_transport) as client:
         storage = _Storage(client)
         cache_hit = await storage.exists(path)
-        synthesis_attempts = 0
         if not cache_hit:
-            audio, synthesis_attempts = await _synthesize(
-                client,
-                text=script,
-                voice_id=voice_id,
-                max_attempts=req.max_synthesis_attempts,
-            )
+            audio = await _synthesize(client, text=script, voice_id=voice_id)
             # Without it players misreport the length and seek inaccurately.
             await storage.upload(path, add_seek_header(audio))
         url = await storage.signed_url(path, settings.rehearsal_url_ttl_seconds)
@@ -92,7 +86,6 @@ async def generate_rehearsal(req: RehearsalRequest) -> RehearsalResponse:
         duration_estimate=estimate_duration(script),
         voice_id=voice_id,
         cache_hit=cache_hit,
-        synthesis_attempts=synthesis_attempts,
     )
 
 
@@ -113,9 +106,7 @@ def estimate_duration(script: str) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
-async def _synthesize(
-    client: httpx.AsyncClient, *, text: str, voice_id: str, max_attempts: int
-) -> tuple[bytes, int]:
+async def _synthesize(client: httpx.AsyncClient, *, text: str, voice_id: str) -> bytes:
     if not settings.mistral_api_key:
         raise LlmUnavailableError("Mistral API key not configured")
     body: dict[str, Any] = {
@@ -125,8 +116,7 @@ async def _synthesize(
         "response_format": "mp3",
     }
     last_exc: Exception | None = None
-    attempts = min(_ATTEMPTS, max_attempts)
-    for attempt in range(attempts):
+    for attempt in range(_ATTEMPTS):
         try:
             r = await client.post(
                 MISTRAL_SPEECH_URL,
@@ -140,11 +130,11 @@ async def _synthesize(
                 audio = r.json().get("audio_data")
                 if not isinstance(audio, str) or not audio:
                     raise LlmUnavailableError("Voxtral TTS returned no audio_data")
-                return base64.b64decode(audio), attempt + 1
+                return base64.b64decode(audio)
             last_exc = LlmUnavailableError(f"Voxtral TTS {r.status_code}: {r.text[:200]}")
             if r.status_code != 429 and r.status_code < 500:
                 raise last_exc  # bad key/voice/model: retrying won't help
-        if attempt < attempts - 1:
+        if attempt < _ATTEMPTS - 1:
             log.warning("tts.retry attempt=%d error=%s", attempt + 1, last_exc)
             await asyncio.sleep(_RETRY_DELAY)
     assert last_exc is not None

@@ -11,7 +11,7 @@ import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 # Set env BEFORE importing redream_api so the global Settings constructs cleanly.
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
@@ -229,19 +229,3 @@ async def start_chat(client: AsyncClient, language: str = "en") -> int:
     r = await client.post("/api/v1/chats/start", json={"language": language})
     assert r.status_code == 201, r.text
     return int(r.json()["chat_id"])
-
-
-async def seed_usage(db_session_maker, *, user_id: UUID, tokens: int) -> None:
-    """Seed today's UserDailyUsage row directly. Used by token-budget tests."""
-    from datetime import datetime, timezone
-
-    from redream_api.db.models.user_daily_usage import UserDailyUsage
-
-    async with db_session_maker() as session:
-        row = UserDailyUsage(
-            user_id=user_id,
-            usage_date=datetime.now(timezone.utc).date(),
-            llm_tokens=tokens,
-        )
-        session.add(row)
-        await session.commit()

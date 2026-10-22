@@ -347,3 +347,36 @@ async def test_generate_passes_response_format_through():
     assert content == '{"ok": true}'
     assert captured["response_format"] == {"type": "json_object"}
     assert captured["model"] == "mistral-large-2512"
+
+
+def _stream_chunk(content=None, usage=None):
+    """Minimal stand-in for an OpenAI streaming chunk."""
+    delta = types.SimpleNamespace(content=content)
+    choices = [] if content is None else [types.SimpleNamespace(delta=delta)]
+    return types.SimpleNamespace(choices=choices, usage=usage)
+
+
+@pytest.mark.parametrize(
+    ("provider_usage", "expected"),
+    [
+        (
+            types.SimpleNamespace(prompt_tokens=12, completion_tokens=5, total_tokens=17),
+            {"input": 12, "output": 5, "total": 17},
+        ),
+        (None, {"input": 0, "output": 0, "total": 0}),
+    ],
+)
+async def test_stream_usage_is_provider_reported_or_zero(provider_usage, expected):
+    llm = agent.Agent(agent.MODELS["MISTRAL_LARGE"], "system prompt")
+
+    async def stream():
+        yield _stream_chunk("Hello ")
+        yield _stream_chunk("there.")
+        yield _stream_chunk(usage=provider_usage)
+
+    llm.client = _fake_client(lambda kwargs: stream())
+
+    items = [item async for item in llm.generate_stream("hi")]
+
+    assert [content for content, _, _ in items[:-1]] == ["Hello ", "there."]
+    assert items[-1] == ("", expected, None)

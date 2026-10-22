@@ -58,11 +58,7 @@ async def test_scaleway_primary_success(monkeypatch):
         assert b"dream.mp3" in body  # multipart file name
         return httpx.Response(
             200,
-            json={
-                "text": "I was chased through a forest.",
-                "language": "english",
-                "usage": {"prompt_tokens": 120, "completion_tokens": 9},
-            },
+            json={"text": "I was chased through a forest.", "language": "english"},
         )
 
     requests = _install_transport(monkeypatch, handler)
@@ -71,7 +67,6 @@ async def test_scaleway_primary_success(monkeypatch):
 
     assert resp.text == "I was chased through a forest."
     assert resp.language_detected == Language.EN  # "english" mapped to enum
-    assert (resp.input_tokens, resp.output_tokens) == (120, 9)
     assert len(requests) == 1  # no fallback touched
 
 
@@ -86,54 +81,17 @@ async def test_scaleway_project_id_scopes_the_url(monkeypatch):
     assert str(requests[0].url) == "https://api.scaleway.ai/proj-123/v1/audio/transcriptions"
 
 
-async def test_usage_shapes_observed_live(monkeypatch):
-    """The two real provider usage shapes (raw-dumped 2026-07-09) map to the
-    budget correctly — especially Mistral's audio tokens, which hide behind
-    total_tokens (top-level prompt_tokens was 3 for an 8-second clip)."""
-    responses = iter(
-        [
-            # Mistral/Voxtral shape
-            {
-                "text": "hello",
-                "usage": {
-                    "prompt_audio_seconds": 7,
-                    "prompt_tokens": 3,
-                    "total_tokens": 410,
-                    "completion_tokens": 32,
-                    "prompt_tokens_details": {"audio_tokens": 375},
-                },
-            },
-            # Scaleway/Whisper shape
-            {"text": "hello", "usage": {"type": "duration", "seconds": 8}},
-        ]
+async def test_short_language_code_is_mapped(monkeypatch):
+    _install_transport(
+        monkeypatch,
+        lambda request: httpx.Response(
+            200, json={"text": "Ich wurde durch einen Wald gejagt.", "language": "de"}
+        ),
     )
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=next(responses))
-
-    _install_transport(monkeypatch, handler)
-
-    mistral_shape = await stt.transcribe(audio_bytes=b"x", file_name="a.wav")
-    assert (mistral_shape.input_tokens, mistral_shape.output_tokens) == (378, 32)
-
-    whisper_shape = await stt.transcribe(audio_bytes=b"x", file_name="a.wav")
-    assert whisper_shape.input_tokens == 8 * 50
-    assert whisper_shape.output_tokens == max(1, len("hello") // 4)
-
-
-async def test_usage_estimated_when_provider_reports_none(monkeypatch):
-    text = "Ich wurde durch einen Wald gejagt."
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"text": text, "language": "de"})
-
-    _install_transport(monkeypatch, handler)
 
     resp = await stt.transcribe(audio_bytes=b"x", file_name="a.wav")
 
     assert resp.language_detected == Language.DE
-    # ADR 0008: transcription must never count as zero against the budget.
-    assert resp.output_tokens == len(text) // 4 > 0
 
 
 async def test_hard_4xx_falls_back_without_retry(monkeypatch):

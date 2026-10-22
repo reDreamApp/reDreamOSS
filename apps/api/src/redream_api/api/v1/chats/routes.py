@@ -1,17 +1,16 @@
-"""Chat routes — IRT-driven conversation with safety + budget gates.
+"""Chat routes — IRT-driven conversation with a safety gate.
 
 Flow for `POST /chats/{id}/message`:
-  1. Token-budget gate (ADR 0008) — 429 if exceeded.
-  2. Persist user message.
-  3. Call AI `/safety/classify` (ADR 0005). If risk=high: write safety_event,
+  1. Persist user message.
+  2. Call AI `/safety/classify` (ADR 0005). If risk=high: write safety_event,
      mark user message as flagged, return helpline payload, do NOT advance.
-  4. Else: call AI `/chat` with the FULL history (stateless AI, ADR 0002).
-  5. Persist AI message with `prompt_version`.
-  6. Update `chat.current_stage` from the response. Set `is_done` if final.
-  7. If stage is `summary`/`final` and structured fields are present, upsert a
+  3. Else: call AI `/chat` with the FULL history (stateless AI, ADR 0002).
+  4. Persist AI message with `prompt_version`.
+  5. Update `chat.current_stage` from the response. Set `is_done` if final.
+  6. If stage is `summary`/`final` and structured fields are present, upsert a
      Dream row from the structured payload (replaces legacy `_parse_summary`,
      ADR 0003).
-  8. Increment the user's daily token usage.
+  7. Log the turn's token counts.
 """
 
 from __future__ import annotations
@@ -41,12 +40,6 @@ from ....db.repositories.chat_repo import ChatRepo
 from ....db.repositories.dream_repo import DreamRepo
 from ....db.repositories.safety_event_repo import SafetyEventRepo
 from ....services.ai_client import AIServiceError, BaseAiClient, get_ai_client
-from ....services.token_budget import (
-    TokenReservation,
-    release_usage,
-    reserve_usage,
-    settle_usage,
-)
 from .schemas import (
     ChatIntensityRequest,
     ChatIntensityResponse,
@@ -228,7 +221,7 @@ async def set_intensity(
 
 # ---------------------------------------------------------------------------
 # The interesting ones: POST /{chat_id}/message and its SSE sibling.
-# The shared gates (404/409/budget/persist/safety) and the shared post-AI
+# The shared gates (404/409/persist/safety) and the shared post-AI
 # persistence live in _pre_turn / _finalize_ai_turn so the two routes cannot
 # drift semantically.
 # ---------------------------------------------------------------------------
@@ -241,7 +234,6 @@ class _TurnSetup:
     chat: Chat
     user_msg: ChatMessage
     history_msgs: list[ChatMessage]
-    reservation: TokenReservation
     safety_payload: SafetyEventPayload | None  # non-None ⇒ high risk, no AI turn
 
 
@@ -252,8 +244,8 @@ async def _pre_turn(
     db: AsyncSession,
     ai: BaseAiClient,
 ) -> _TurnSetup:
-    """Shared pre-AI gates: 404/409 → budget (429) → persist user message →
-    title → safety classifier (ADR 0005, 502 on failure, high-risk short-circuit).
+    """Shared pre-AI gates: 404/409 → persist user message → title → safety
+    classifier (ADR 0005, 502 on failure, high-risk short-circuit).
 
     Raises HTTPException for every failure, so the streaming route runs this
     BEFORE the response starts and errors arrive as plain JSON, exactly like
@@ -267,14 +259,6 @@ async def _pre_turn(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "chat not found")
     if chat.is_done:
         raise HTTPException(status.HTTP_409_CONFLICT, "chat is already finished")
-
-    existing = await msg_repo.list_for_chat(chat.id)
-    reservation = await reserve_usage(
-        db,
-        user_id=user.id,
-        tokens=8192
-        + 4 * (len(body.content.encode()) + sum(len(m.content.encode()) for m in existing)),
-    )
 
     # ---- persist user message --------------------------------------------
     user_msg = ChatMessage(
@@ -306,7 +290,6 @@ async def _pre_turn(
             chat=chat,
             user_msg=user_msg,
             history_msgs=history_msgs,
-            reservation=reservation,
             safety_payload=None,
         )
     last_assistant = next(
@@ -327,7 +310,6 @@ async def _pre_turn(
             }
         )
     except AIServiceError as exc:
-        await release_usage(db, reservation)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"safety: {exc}") from exc
 
     safety_payload: SafetyEventPayload | None = None
@@ -352,14 +334,11 @@ async def _pre_turn(
             confidence=float(safety.get("confidence", 0.0)),
             message=_HELPLINE_MESSAGE.get(chat.language, _HELPLINE_MESSAGE["en"]),
         )
-        # No AI turn follows a high-risk message.
-        await release_usage(db, reservation)
 
     return _TurnSetup(
         chat=chat,
         user_msg=user_msg,
         history_msgs=history_msgs,
-        reservation=reservation,
         safety_payload=safety_payload,
     )
 
@@ -400,10 +379,9 @@ async def _finalize_ai_turn(
     chat: Chat,
     history_msgs: list[ChatMessage],
     ai_resp: dict[str, Any],
-    reservation: TokenReservation,
 ) -> ChatMessage:
     """Shared post-AI persistence: AI message row, chat advance (incl. the
-    nightmare-summary echo), Dream upsert (ADR 0003), usage accounting (ADR 0008).
+    nightmare-summary echo), Dream upsert (ADR 0003), token-count log line.
     """
     ai_stage = str(ai_resp.get("stage", chat.current_stage))
     ai_text = str(ai_resp.get("response", ""))
@@ -443,13 +421,13 @@ async def _finalize_ai_turn(
             intensity=_extract_intensity(structured, history_msgs),
         )
 
-    # ---- token usage accounting (ADR 0008) -------------------------------
-    await settle_usage(
-        db,
-        reservation,
-        input_tokens=int(usage.get("input_tokens", 0)),
-        output_tokens=int(usage.get("output_tokens", 0)),
-    )
+    # ---- token usage: counts only, logs outlive account deletion ---------
+    if usage:
+        log.info(
+            "chat.usage input_tokens=%s output_tokens=%s",
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+        )
     return ai_msg
 
 
@@ -485,7 +463,6 @@ async def send_message(
         # reply) would replay it into the next turn's history alongside the
         # client's retry of the same text.
         await ChatMessageRepo(db).delete(setup.user_msg)
-        await release_usage(db, setup.reservation)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"chat: {exc}") from exc
 
     ai_msg = await _finalize_ai_turn(
@@ -494,7 +471,6 @@ async def send_message(
         chat=chat,
         history_msgs=setup.history_msgs,
         ai_resp=ai_resp,
-        reservation=setup.reservation,
     )
     return ChatMessageResponse(
         chat_id=chat.id,
@@ -519,7 +495,7 @@ async def send_message(
 #   4. data: [DONE]                                        — always terminal
 # Mid-stream failure: data: {"error": "<msg>"} then [DONE]; the user message
 # was rolled back (parity with the non-streaming 502 path) so the client's
-# retry flow can resend it. Pre-stream failures (404/409/429/502) raise before
+# retry flow can resend it. Pre-stream failures (404/409/502) raise before
 # streaming starts and arrive as plain JSON errors, same as /message.
 # The AI's internal frames that are not part of this contract (its own `final`,
 # clinical `safety`, `[DONE]`) are consumed here and never forwarded.
@@ -594,7 +570,6 @@ async def _stream_ai_turn(
             chat=chat,
             history_msgs=setup.history_msgs,
             ai_resp=final,
-            reservation=setup.reservation,
         )
         yield _sse(
             {
@@ -635,7 +610,6 @@ async def _stream_ai_turn(
             # AI stream failed before anything beyond the user message was
             # written — same rollback as the non-streaming 502 path.
             await _rollback_user_msg()
-            await release_usage(db, setup.reservation)
         yield _sse({"error": str(exc)})
     yield _SSE_DONE
 

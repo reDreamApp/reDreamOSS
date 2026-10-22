@@ -14,13 +14,6 @@ from ....db.models.user import User
 from ....db.repositories.dream_repo import DreamRepo
 from ....services.ai_client import AIServiceError, BaseAiClient, get_ai_client
 from ....services.storage_service import delete_rehearsal_audio_for_dream, refresh_rehearsal_url
-from ....services.token_budget import (
-    TTS_MAX_SYNTHESIS_ATTEMPTS,
-    release_usage,
-    reserve_usage,
-    settle_tts_usage,
-    tts_budget_tokens,
-)
 from .schemas import DreamCreate, DreamOut, DreamUpdate, RehearsalGenerateRequest
 
 router = APIRouter(prefix="/dreams", tags=["dreams"])
@@ -195,10 +188,6 @@ async def generate_rehearsal(
     ):
         return await _refresh_audio(db, dream)
 
-    tokens_per_attempt = tts_budget_tokens(dream.rewritten_dream)
-    reservation = await reserve_usage(
-        db, user_id=user.id, tokens=tokens_per_attempt * TTS_MAX_SYNTHESIS_ATTEMPTS
-    )
     try:
         result = await ai.rehearsal_generate(
             {
@@ -206,20 +195,10 @@ async def generate_rehearsal(
                 "user_id": str(user.id),
                 "rewritten_dream": dream.rewritten_dream,
                 "language": body.language,
-                "max_synthesis_attempts": TTS_MAX_SYNTHESIS_ATTEMPTS,
             }
         )
     except AIServiceError as exc:
-        await release_usage(db, reservation)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-
-    await settle_tts_usage(
-        db,
-        reservation,
-        tokens_per_attempt=tokens_per_attempt,
-        synthesis_attempts=result.get("synthesis_attempts"),
-        cache_hit=result.get("cache_hit"),
-    )
 
     dream.rehearsal_audio_url = result.get("audio_url")
     dream.rehearsal_script = result.get("script")

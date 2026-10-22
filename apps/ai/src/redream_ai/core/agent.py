@@ -7,7 +7,6 @@ from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, InternalSer
 from groq import AsyncGroq
 import logging
 from .prompts import ROUTING_PROMPT
-import tiktoken
 # Create a specific logger for prompts
 prompt_logger = logging.getLogger("prompts")
 logger = logging.getLogger(__name__)
@@ -283,9 +282,7 @@ class Agent:
 
         ``system_prompt`` overrides self.system_prompt for this call only (see generate)."""
         try:
-            encoder = tiktoken.get_encoding("cl100k_base")
-            prompt_tokens = len(encoder.encode(prompt))
-            completion_tokens = 0
+            usage = {"input": 0, "output": 0, "total": 0}
 
             primary_kwargs = self._build_request_kwargs(
                 self.model, self._uses_new_api, self.provider, prompt,
@@ -307,15 +304,16 @@ class Agent:
                 stream = await self._create_with_retries(self.fallback_client, fallback_kwargs)
 
             async for chunk in stream:
-                if content := chunk.choices[0].delta.content:
-                    completion_tokens += len(encoder.encode(content))
+                if chunk_usage := getattr(chunk, "usage", None):
+                    usage = {
+                        "input": chunk_usage.prompt_tokens,
+                        "output": chunk_usage.completion_tokens,
+                        "total": chunk_usage.total_tokens
+                    }
+                if chunk.choices and (content := chunk.choices[0].delta.content):
                     yield content, None, None
 
-            yield "", {
-                "input": prompt_tokens,
-                "output": completion_tokens,
-                "total": prompt_tokens + completion_tokens
-            }, None
+            yield "", usage, None
         except Exception as e:
             logger.error(f"Error in stream generation: {str(e)}")
             raise

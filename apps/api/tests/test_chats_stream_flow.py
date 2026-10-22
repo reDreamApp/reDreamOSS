@@ -5,7 +5,7 @@ Exercises the backend frame contract:
     user_message -> safety_event -> [DONE]                  (high risk)
     user_message -> content* -> error -> [DONE]             (mid-stream failure,
                                                              user msg rolled back)
-Pre-stream failures (409 finished, 429 budget) arrive as plain HTTP errors.
+Pre-stream failures (409 finished) arrive as plain HTTP errors.
 
 The FakeAiClient's `queue_chat_stream` takes frames exactly as the real
 HttpxAiClient yields them: stripped `data: <payload>` strings.
@@ -15,11 +15,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import select
-
-from redream_api.db.models.user_daily_usage import UserDailyUsage
-
-from .conftest import seed_usage, start_chat
+from .conftest import start_chat
 
 # A final frame as the AI service emits it: the full ChatResponse JSON.
 _FINAL = {
@@ -51,7 +47,7 @@ def _frames(raw: str) -> list:
     return out
 
 
-async def test_stream_happy_path_frames_and_persistence(client, fake_ai, db_session_maker):
+async def test_stream_happy_path_frames_and_persistence(client, fake_ai):
     chat_id = await start_chat(client)
     fake_ai.queue_chat_stream(
         [
@@ -79,15 +75,11 @@ async def test_stream_happy_path_frames_and_persistence(client, fake_ai, db_sess
     assert frames[4] == "[DONE]"
     assert len(frames) == 5  # AI's internal safety/final/[DONE] were consumed
 
-    # Persistence: both messages stored, stage advanced, usage recorded.
+    # Persistence: both messages stored, stage advanced.
     msgs = (await client.get(f"/api/v1/chats/{chat_id}/messages")).json()
     assert [m["role"] for m in msgs] == ["user", "assistant"]
     chats = (await client.get("/api/v1/chats")).json()
     assert chats[0]["current_stage"] == "rewriting"
-
-    async with db_session_maker() as session:
-        row = (await session.execute(select(UserDailyUsage))).scalars().first()
-        assert row is not None and row.llm_tokens == 33  # 11 + 22
 
 
 async def test_stream_persists_and_echoes_nightmare_summary(client, fake_ai):
@@ -195,15 +187,6 @@ async def test_stream_finished_chat_409_before_streaming(client, fake_ai):
     assert r.status_code == 409  # plain JSON error, not SSE
 
 
-async def test_stream_budget_429_before_streaming(client, fake_ai, fake_user, db_session_maker):
-    chat_id = await start_chat(client)
-    await seed_usage(db_session_maker, user_id=fake_user.id, tokens=100_000)
-
-    r = await client.post(f"/api/v1/chats/{chat_id}/message/stream", json={"content": "hi"})
-    assert r.status_code == 429
-    assert "Retry-After" in r.headers
-
-
 # ---------------------------------------------------------------------------
 # Failure semantics (from the 2026-07-02 adversarial review): disconnects are
 # BaseExceptions the old `except Exception` never saw, post-finalize failures
@@ -281,21 +264,22 @@ async def test_disconnect_on_safety_path_keeps_moderation_records(db, fake_user,
 async def test_post_finalize_failure_keeps_both_rows_and_emits_error(
     client, fake_ai, monkeypatch
 ):
-    """A DB error AFTER the AI message committed (here: record_usage poisons
-    the session with a failed flush) must keep both rows — parity with the
-    non-streaming 500 — and still emit the error frame + [DONE] instead of
-    crashing the handler on the poisoned session."""
+    """A DB error AFTER the AI message committed (here: the Dream upsert from
+    the structured summary poisons the session with a failed flush) must keep
+    both rows — parity with the non-streaming 500 — and still emit the error
+    frame + [DONE] instead of crashing the handler on the poisoned session."""
     from redream_api.api.v1.chats import routes as chats_routes
     from redream_api.db.models.chat_message import ChatMessage
 
-    async def poison(db, reservation, *, input_tokens, output_tokens):
+    async def poison(*, db, **kwargs):
         db.add(ChatMessage(chat_id=None, role="assistant", content="x", stage=None))
         await db.commit()  # NOT NULL violation → failed flush → poisoned session
 
-    monkeypatch.setattr(chats_routes, "settle_usage", poison)
+    monkeypatch.setattr(chats_routes, "_upsert_dream_from_structured", poison)
 
     chat_id = await start_chat(client)
-    fake_ai.queue_chat_stream([_content("a"), "data: " + json.dumps({"final": _FINAL})])
+    final = {**_FINAL, "stage": "summary", "structured": {"title": "Forest"}}
+    fake_ai.queue_chat_stream([_content("a"), "data: " + json.dumps({"final": final})])
     r = await client.post(f"/api/v1/chats/{chat_id}/message/stream", json={"content": "hi"})
     frames = _frames(r.text)
 

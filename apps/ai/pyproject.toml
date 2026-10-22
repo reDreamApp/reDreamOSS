@@ -15,11 +15,10 @@ dependencies = [
     # Ported IRT chatbot core (redream_ai/core, redream_ai/clinical_safety):
     # OpenAI-compatible SDK drives Scaleway (primary) + direct Mistral (fallback);
     # groq SDK is referenced by the registry but unused at runtime; networkx builds
-    # the clinical knowledge graph; tiktoken is the streaming token estimate.
+    # the clinical knowledge graph.
     "openai>=1.40",
     "groq>=0.11",
     "networkx>=3.2",
-    "tiktoken>=0.7",
     "python-dotenv>=1.0",
 ]
 
@@ -75,7 +74,7 @@ mypy_path = "src"
 
 # Third-party SDKs used only by the vendored core that ship no type stubs.
 [[tool.mypy.overrides]]
-module = ["groq.*", "networkx.*", "tiktoken.*", "dotenv.*"]
+module = ["groq.*", "networkx.*", "dotenv.*"]
 ignore_missing_imports = true
 
 # Vendored: ported IRT core + safety engine (copied verbatim; not type-clean by

@@ -69,38 +69,6 @@ def _detected_language(payload: dict[str, Any]) -> Language | None:
     return _LANGUAGE_MAP.get(raw.strip().lower())
 
 
-# Voxtral bills ~54 audio tokens/second (375 tokens for 7s, observed live
-# 2026-07-09); used to convert Scaleway's duration-only usage for the budget.
-_AUDIO_TOKENS_PER_SECOND = 50
-
-
-def _usage_tokens(payload: dict[str, Any], text: str) -> tuple[int, int]:
-    """(input_tokens, output_tokens) for the ADR 0008 budget.
-
-    Observed live response shapes (2026-07-09):
-    - Mistral: audio cost hides in prompt_tokens_details.audio_tokens (the
-      top-level prompt_tokens was 3 for an 8s clip!) — so input is
-      total_tokens - completion_tokens, never bare prompt_tokens.
-    - Scaleway whisper: {"type": "duration", "seconds": N} only — convert at
-      ~50 audio tokens/sec for budget parity with the Voxtral fallback.
-    - Anything else: estimate output from text length (~4 chars/token) so
-      voice journaling never counts as zero against the daily budget.
-    """
-    usage = payload.get("usage")
-    if isinstance(usage, dict):
-        total = usage.get("total_tokens")
-        completion = usage.get("completion_tokens")
-        if isinstance(total, int) and isinstance(completion, int):
-            return max(0, total - completion), completion
-        prompt = usage.get("prompt_tokens")
-        if isinstance(prompt, int) or isinstance(completion, int):
-            return int(prompt or 0), int(completion or 0)
-        seconds = usage.get("seconds")
-        if usage.get("type") == "duration" and isinstance(seconds, (int, float)):
-            return int(seconds * _AUDIO_TOKENS_PER_SECOND), max(1, len(text) // 4)
-    return 0, max(1, len(text) // 4)
-
-
 async def _transcribe_via(
     *,
     provider: str,
@@ -130,13 +98,9 @@ async def _transcribe_via(
             else:
                 if r.status_code < 300:
                     payload = r.json()
-                    text = str(payload.get("text", ""))
-                    input_tokens, output_tokens = _usage_tokens(payload, text)
                     return TranscribeResponse(
-                        text=text,
+                        text=str(payload.get("text", "")),
                         language_detected=_detected_language(payload),
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
                     )
                 if r.status_code == 429 or r.status_code >= 500:
                     last_exc = LlmUnavailableError(

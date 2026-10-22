@@ -14,9 +14,7 @@ from redream_api.core.config import settings
 from redream_api.db.models.chat_message import ChatMessage
 from redream_api.db.models.content_report import ContentReport
 from redream_api.db.models.report_action import ReportAction
-from redream_api.db.repositories.usage_repo import UsageRepo
 from redream_api.services import email_notification, storage_service
-from redream_api.services.token_budget import reserve_usage, settle_usage
 
 from .conftest import start_chat
 
@@ -131,32 +129,6 @@ async def test_hide_is_atomic_and_owner_message_bound(client, db_session_maker, 
     async with db_session_maker() as db:
         assert (await db.get(ChatMessage, message_id)).visibility_status == "hidden"
         assert await db.scalar(select(func.count()).select_from(ReportAction)) == 1
-
-
-async def test_concurrent_reservations_cannot_overbook_total(
-    fake_user, db_session_maker, monkeypatch
-):
-    monkeypatch.setattr(settings, "daily_llm_token_budget_total", 8192)
-
-    async def reserve():
-        async with db_session_maker() as db:
-            try:
-                return await reserve_usage(db, user_id=fake_user.id)
-            except Exception as error:
-                from fastapi import HTTPException
-
-                assert isinstance(error, HTTPException) and error.status_code == 429
-                return None
-
-    reservations = await asyncio.gather(*[reserve() for _ in range(6)])
-    assert len([r for r in reservations if r]) == 1
-    async with db_session_maker() as db:
-        assert await UsageRepo(db).get_today_total() == 8192
-        assert await UsageRepo(db).get_today_tokens(fake_user.id) == 8192
-        reservation = next(r for r in reservations if r)
-        await settle_usage(db, reservation, input_tokens=10, output_tokens=20)
-        assert await UsageRepo(db).get_today_total() == 30
-        assert await UsageRepo(db).get_today_tokens(fake_user.id) == 30
 
 
 async def test_audio_refresh_moves_legacy_path_and_signs_shortly(monkeypatch):

@@ -48,13 +48,6 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_use_tls: bool = True
 
-    # Token budgets (ADR 0008): per user, and for all users together.
-    daily_llm_token_budget: int = 100_000
-    daily_llm_token_budget_total: int = 500_000
-    # $16 / million TTS characters relative to a rough $2 / million chat
-    # tokens. These are budget units, not tokenizer output or invoice totals.
-    tts_budget_tokens_per_character: int = Field(default=8, ge=1, le=10_000)
-
     # Art. 9 consent — the consent-text version users must have granted.
     # Bump ONLY on material changes to the consent copy (new processor, new
     # purpose): a bump forces every user through re-consent on next launch.
