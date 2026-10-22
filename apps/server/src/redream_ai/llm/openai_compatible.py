@@ -1,8 +1,8 @@
-"""Scaleway Generative APIs adapter implementing `LlmClient` (ADR 0010).
+"""Any OpenAI-compatible chat-completions endpoint as an `LlmClient`.
 
-Scaleway speaks the OpenAI chat-completions protocol, so this wraps the
-OpenAI SDK. It serves the crisis classifier's primary model; its errors are
-meant to reach a fallback quickly, hence one retry and a short timeout.
+It serves the crisis classifier (ADR 0005). The backend blocks the chat turn
+while the check runs, so a failing endpoint must surface quickly: one retry
+and the caller's timeout (LLM_SAFETY_TIMEOUT_SECONDS in production).
 """
 
 from __future__ import annotations
@@ -15,32 +15,26 @@ import openai
 
 from .base import LlmUnavailableError, StreamChunk
 
-# A crisis check answers in about half a second. A slow or failing Scaleway
-# must leave the backend's 90 s AI call timeout room for the fallback.
-_TIMEOUT = 10.0
-_MAX_RETRIES = 1
 
-
-class ScalewayLlmClient:
-    """Production `LlmClient` backed by Scaleway Generative APIs."""
+class OpenAICompatibleLlmClient:
+    """Production `LlmClient` for the endpoint at LLM_BASE_URL."""
 
     def __init__(
         self,
+        base_url: str,
         api_key: str,
-        project_id: str = "",
+        timeout: float,
+        max_retries: int = 1,
         *,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        if not api_key:
-            raise ValueError("SCALEWAY_API_KEY must be set")
-        # A key restricted to a project other than the organization's default
-        # one must name it in the URL (same rule as core/agent.py).
-        project = f"/{project_id}" if project_id else ""
+        if not base_url or not api_key:
+            raise ValueError("LLM_BASE_URL and LLM_API_KEY must be set")
         self._client = openai.AsyncOpenAI(
+            base_url=base_url,
             api_key=api_key,
-            base_url=f"https://api.scaleway.ai{project}/v1",
-            timeout=_TIMEOUT,
-            max_retries=_MAX_RETRIES,
+            timeout=timeout,
+            max_retries=max_retries,
             http_client=http_client,
         )
 
@@ -50,9 +44,10 @@ class ScalewayLlmClient:
         except (
             openai.RateLimitError,
             openai.InternalServerError,
+            # Includes openai.APITimeoutError.
             openai.APIConnectionError,
         ) as exc:
-            raise LlmUnavailableError(f"Scaleway unavailable: {exc}") from exc
+            raise LlmUnavailableError(f"LLM endpoint unavailable: {exc}") from exc
 
     async def chat(
         self,
@@ -77,12 +72,13 @@ class ScalewayLlmClient:
             kwargs["reasoning_effort"] = reasoning_effort
 
         response = await self._create(kwargs)
+        # Some endpoints leave out the usage block or the content.
         content = response.choices[0].message.content or ""
-        usage = {
-            "input_tokens": response.usage.prompt_tokens,
-            "output_tokens": response.usage.completion_tokens,
+        usage = response.usage
+        return content, {
+            "input_tokens": (usage.prompt_tokens or 0) if usage else 0,
+            "output_tokens": (usage.completion_tokens or 0) if usage else 0,
         }
-        return content, usage
 
     async def chat_stream(
         self,
@@ -108,10 +104,11 @@ class ScalewayLlmClient:
         stream = await self._create(kwargs)
         async for chunk in stream:
             choice = chunk.choices[0] if chunk.choices else None
-            out: StreamChunk = {"text": (choice.delta.content or "") if choice else ""}
+            delta = choice.delta if choice is not None else None
+            out: StreamChunk = {"text": (delta.content or "") if delta is not None else ""}
             if choice is not None and choice.finish_reason:
                 out["finish_reason"] = choice.finish_reason
             if chunk.usage is not None:
-                out["input_tokens"] = chunk.usage.prompt_tokens
-                out["output_tokens"] = chunk.usage.completion_tokens
+                out["input_tokens"] = chunk.usage.prompt_tokens or 0
+                out["output_tokens"] = chunk.usage.completion_tokens or 0
             yield out

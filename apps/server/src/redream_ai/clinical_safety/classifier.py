@@ -21,7 +21,8 @@ from dataclasses import dataclass
 # Add parent directory to path for imports
 # sys.path hack removed — package-relative imports used instead
 
-from ..core.agent import Agent, ModelConfig, MODELS, LogprobsResult
+from ..config import settings
+from ..core.agent import Agent, LogprobsResult
 from .graph_definitions import build_clinical_graph, get_all_node_ids, get_maladaptive_nodes, get_adaptive_nodes
 
 logger = logging.getLogger(__name__)
@@ -177,17 +178,18 @@ class ClinicalClassifier:
     that returned codes exist in the clinical knowledge graph.
     """
     
-    def __init__(self, model_config: Optional[ModelConfig] = None, use_context_examples: bool = False):
+    def __init__(self, model: Optional[str] = None, use_context_examples: bool = False):
         """
         Initialize the Clinical Classifier.
 
         Args:
-            model_config: Optional model configuration. Defaults to MISTRAL_SMALL (Scaleway).
+            model: Optional model ID. Defaults to LLM_SMALL_MODEL.
             use_context_examples: If True, append context-aware few-shot examples to the prompt.
                                   Default False preserves the original prompt for backward compatibility.
         """
-        # Use Scaleway Mistral Small for classification (logprobs required, not supported on OpenRouter)
-        self.model_config = model_config or MODELS["MISTRAL_SMALL"]
+        # The small model on the LLM_* endpoint. No logprobs are requested (not every
+        # OpenAI-compatible endpoint has them), so confidence stays None.
+        self.model = model or settings.llm_small_model
         self.use_context_examples = use_context_examples
 
         # Build prompt: base + optional context-aware examples
@@ -198,17 +200,16 @@ class ClinicalClassifier:
 
         # Initialize the agent with clinical coder prompt
         self.agent = Agent(
-            model_config=self.model_config,
+            model=self.model,
             system_prompt=prompt,
             temperature=0,  # Deterministic baseline; consistency mode overrides to 0.7
-            fallback_model_config=MODELS["MISTRAL_SMALL_DIRECT"],  # direct Mistral Small; supports logprobs
         )
         
         # Load the graph to validate node IDs
         self.graph = build_clinical_graph()
         self.valid_node_ids = set(get_all_node_ids(self.graph))
         
-        logger.info(f"ClinicalClassifier initialized with model: {self.model_config.name}")
+        logger.info(f"ClinicalClassifier initialized with model: {self.model}")
         logger.info(f"Valid node IDs: {self.valid_node_ids}")
     
     async def classify_intent(
@@ -248,13 +249,10 @@ Classify the rewriting attempt. If user claims to feel nothing about distressing
             else:
                 classification_input = user_text
             
-            # Always request logprobs for margin calculation
+            # Never requests logprobs: `logprobs` comes back None, so confidence and
+            # margin stay None and the critic trusts the label.
             t0 = time.perf_counter()
-            response, usage, logprobs = await self.agent.generate(
-                classification_input,
-                logprobs=True,
-                top_logprobs=5
-            )
+            response, usage, logprobs = await self.agent.generate(classification_input)
             latency_ms = (time.perf_counter() - t0) * 1000
             
             # Parse the code from response
@@ -264,8 +262,8 @@ Classify the rewriting attempt. If user claims to feel nothing about distressing
             code = ''.join(c for c in code if c.isalnum())
             
             # Primary confidence: length-normalized joint probability from LogprobsResult.
-            # None = logprobs were unavailable (e.g. a fallback provider that did not return
-            # them) -> the critic must NOT gate on confidence and should trust the label.
+            # None = logprobs were unavailable (they are not requested) -> the critic
+            # must NOT gate on confidence and should trust the label.
             # 0.0 = a genuine zero (fuzzy match / total failure -> route to UNCLASSIFIED).
             confidence = None
             mean_logprob_value = None
@@ -290,8 +288,8 @@ Classify the rewriting attempt. If user claims to feel nothing about distressing
                     margin = prob_winner - prob_runner_up
             
             if confidence is None:
-                logger.warning(
-                    "Classifier logprobs unavailable (likely the direct-Mistral fallback); "
+                logger.debug(
+                    "Classifier logprobs unavailable (not requested); "
                     "skipping confidence gating for this segment and trusting the label."
                 )
 

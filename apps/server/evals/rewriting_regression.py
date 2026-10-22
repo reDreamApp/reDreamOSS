@@ -9,8 +9,8 @@ Covers the 2026-07-15 tester feedback (Ramon):
    "summary" after the user confirms they're satisfied. Routing rule 5 now
    pins that to "final".
 
-Hits the REAL LLM providers (SCALEWAY_API_KEY + MISTRAL_API_KEY from
-apps/server/.env). Run on every edit of core/prompts.py:
+Hits the REAL model behind LLM_BASE_URL (the LLM_* settings, from the
+environment or apps/server/.env). Run on every edit of core/prompts.py:
 
     cd apps/server && uv run python evals/rewriting_regression.py
 """
@@ -20,28 +20,15 @@ apps/server/.env). Run on every edit of core/prompts.py:
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-
-def _load_dotenv(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip('"'))
-
-
-# Agents are built at import time from env — load keys BEFORE importing the core.
-_load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-
-from redream_ai.core import irt_app  # noqa: E402
-from redream_ai.core.models import ChatInput, Conversation  # noqa: E402
+# The core builds its agents at import, from the LLM_* settings.
+from redream_ai.config import LLM_REQUIRED, settings
+from redream_ai.core import irt_app
+from redream_ai.core.models import ChatInput, Conversation
 
 RUNS = 3  # live model at temperature>0 — check stability across repeats
 
@@ -159,8 +146,8 @@ async def eval_routing(label: str, turns, language: str, reply: str, want: str) 
 
 
 async def main() -> int:
-    if not (os.environ.get("SCALEWAY_API_KEY") and os.environ.get("MISTRAL_API_KEY")):
-        print("SCALEWAY_API_KEY / MISTRAL_API_KEY missing — cannot run live eval")
+    if not settings.llm_configured:
+        print(f"{LLM_REQUIRED} must be set (apps/server/.env) — cannot run live eval")
         return 2
 
     failures = 0

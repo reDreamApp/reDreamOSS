@@ -94,35 +94,31 @@ class InProcessAiClient:
     """Production `BaseAiClient` — calls redream_ai in this process."""
 
     def __init__(self) -> None:
-        from redream_ai.api.safety import build_mistral_llm_client, build_scaleway_llm_client
+        from redream_ai.api.safety import build_safety_llm_client
 
-        # Crisis classifier (ADR 0005): Scaleway primary, direct Mistral
+        # Crisis classifier (ADR 0005): one client on the LLM_* endpoint, no
         # fallback, built once per process.
-        self._safety_llm: LlmClient | None = build_scaleway_llm_client()
-        self._safety_fallback_llm: LlmClient | None = build_mistral_llm_client()
+        self._safety_llm: LlmClient | None = build_safety_llm_client()
 
     def log_readiness(self) -> None:
         """Log what the AI side has ready. Importing the IRT core builds its
         agents and the SafetyCritic, so this also does that work up front."""
+        from redream_ai.config import LLM_REQUIRED, settings
         from redream_ai.core import irt_app
 
         if irt_app.routing_agent is None or irt_app.response_agent is None:
-            log.warning(
-                "IRT agents UNCONFIGURED — set SCALEWAY_API_KEY + MISTRAL_API_KEY; "
-                "chat turns fail (502)"
-            )
+            log.warning("IRT agents UNCONFIGURED — set %s; chat turns fail (502)", LLM_REQUIRED)
         else:
             log.info(
                 "IRT pipeline ready (agents=ok, safety_critic=%s)",
                 "ok" if irt_app.safety_critic is not None else "disabled (fail-open)",
             )
-        if self._safety_llm is None or self._safety_fallback_llm is None:
+        if self._safety_llm is None:
             log.warning(
-                "crisis classifier UNCONFIGURED — set SCALEWAY_API_KEY + MISTRAL_API_KEY; "
-                "chat turns fail (502)"
+                "crisis classifier UNCONFIGURED — set %s; chat turns fail (502)", LLM_REQUIRED
             )
         else:
-            log.info("crisis classifier ready (Scaleway primary, Mistral fallback)")
+            log.info("crisis classifier ready (model=%s)", settings.safety_model)
 
     async def chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         from redream_ai.api import chat as ai_chat
@@ -162,15 +158,14 @@ class InProcessAiClient:
         from redream_ai.models import SafetyRequest
 
         async with _boundary("safety_classify", _CHAT_TIMEOUT):
-            if self._safety_llm is None or self._safety_fallback_llm is None:
+            if self._safety_llm is None:
+                from redream_ai.config import LLM_REQUIRED
+
                 raise AIServiceError(
-                    "safety_classify failed: crisis classifier not configured "
-                    "(set SCALEWAY_API_KEY + MISTRAL_API_KEY)"
+                    f"safety_classify failed: crisis classifier not configured (set {LLM_REQUIRED})"
                 )
             resp = await ai_safety.safety_classify(
-                SafetyRequest.model_validate(payload),
-                llm=self._safety_llm,
-                fallback_llm=self._safety_fallback_llm,
+                SafetyRequest.model_validate(payload), llm=self._safety_llm
             )
             return resp.model_dump(mode="json")
 

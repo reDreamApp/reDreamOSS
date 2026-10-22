@@ -11,7 +11,8 @@ from typing import Any, Protocol, TypedDict
 
 
 class LlmUnavailableError(Exception):
-    """The provider is temporarily unavailable (rate limit / 5xx) after retries.
+    """The provider is temporarily unavailable (rate limit / 5xx / connection /
+    timeout) after retries.
 
     It names the provider outage in the AIServiceError the backend's
     ai_client raises, so logs distinguish "try again shortly" from a real bug.
@@ -38,8 +39,7 @@ class LlmClient(Protocol):
     """Async LLM client protocol.
 
     Implementations:
-        - ScalewayLlmClient (production, crisis classifier primary)
-        - MistralLlmClient (production, crisis classifier fallback)
+        - OpenAICompatibleLlmClient (production, crisis classifier)
         - FakeLlmClient (tests + offline dev)
     """
 

@@ -1,8 +1,8 @@
 """LLM client abstraction.
 
-Routes accept an `LlmClient` and never import the Mistral SDK directly. Tests
-inject `FakeLlmClient`. Production uses `ScalewayLlmClient` with
-`MistralLlmClient` as fallback.
+Routes accept an `LlmClient` and never import a provider SDK directly. Tests
+inject `FakeLlmClient`. Production uses `OpenAICompatibleLlmClient` on the
+LLM_* endpoint.
 """
 
 from .base import LlmClient, StreamChunk

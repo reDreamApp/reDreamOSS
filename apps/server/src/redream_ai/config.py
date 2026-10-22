@@ -5,6 +5,9 @@ from __future__ import annotations
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Named wherever a missing chat endpoint is reported (503, readiness log, errors).
+LLM_REQUIRED = "LLM_BASE_URL, LLM_API_KEY, LLM_MODEL and LLM_SMALL_MODEL"
+
 
 class Settings(BaseSettings):
     """Runtime config. Values come from environment variables or .env.
@@ -12,6 +15,28 @@ class Settings(BaseSettings):
     Surface area is mirrored in .env.example.
     """
 
+    # Chat LLM: any OpenAI-compatible chat-completions endpoint, one provider
+    # for every text role.
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    # Replies, nightmare summary, summary extraction.
+    llm_model: str = ""
+    # Routing, talk gate, replay check, safety segmenter, clinical classifier.
+    llm_small_model: str = ""
+    # Crisis check (ADR 0005); empty = llm_small_model.
+    llm_safety_model: str = ""
+    # Per request. The SDK default (600 s) would outlast the backend's budget.
+    llm_timeout_seconds: float = Field(default=60.0, gt=0)
+    # The crisis check blocks the chat turn, so it gets less.
+    llm_safety_timeout_seconds: float = Field(default=20.0, gt=0)
+    # Send response_format json_object; off for endpoints that reject it (the
+    # answers are then parsed out of prose or code fences).
+    llm_json_mode: bool = True
+    # The rewriting stage's SafetyCritic. false runs chat without it and logs a
+    # warning when the core is built.
+    safety_critic_enabled: bool = True
+
+    # STT/TTS provider keys (S09 replaces them).
     mistral_api_key: str = Field(default="", description="Mistral API key (fallback path)")
     scaleway_api_key: str = Field(default="", description="Scaleway API key (primary path)")
     # Needed when the key is restricted to a project other than the
@@ -19,11 +44,6 @@ class Settings(BaseSettings):
     scaleway_project_id: str = ""
 
     # Pinned model IDs (ADR 0010 — never floating aliases for prod models).
-    # Chat/routing/safety-critic IDs live in core/agent.py::MODELS, not here.
-    # Crisis classifier (ADR 0010, 2026-10-21 amendment): Mistral Small on
-    # Scaleway primary, Ministral 8B on direct Mistral fallback.
-    scaleway_safety_model: str = "mistral-small-3.2-24b-instruct-2506"
-    mistral_safety_model: str = "ministral-8b-2512"
     # Speech v3: the German preset needs it; speech v1 (voxtral-mini-tts-2603)
     # rejects it (2026-10-21).
     voxtral_tts_model: str = "voxtral-mini-tts-3-0"
@@ -49,6 +69,18 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     log_level: str = "INFO"
+
+    @property
+    def llm_configured(self) -> bool:
+        """True once the endpoint and both chat models are set."""
+        return bool(
+            self.llm_base_url and self.llm_api_key and self.llm_model and self.llm_small_model
+        )
+
+    @property
+    def safety_model(self) -> str:
+        """The crisis classifier's model: LLM_SAFETY_MODEL, else LLM_SMALL_MODEL."""
+        return self.llm_safety_model or self.llm_small_model
 
     @field_validator("rehearsal_url_ttl_seconds", mode="before")
     @classmethod

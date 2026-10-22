@@ -50,6 +50,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from ..config import LLM_REQUIRED
 from ..core import irt_app
 from ..core.models import ChatInput as PortedChatInput
 from ..core.models import Conversation as PortedConversation
@@ -96,9 +97,7 @@ def _validate_chat_request(req: ChatRequest) -> None:
     if not req.messages:
         raise HTTPException(400, "messages must not be empty")
     if irt_app.routing_agent is None or irt_app.response_agent is None:
-        raise HTTPException(
-            503, "IRT agents not configured (set SCALEWAY_API_KEY + MISTRAL_API_KEY)"
-        )
+        raise HTTPException(503, f"IRT agents not configured (set {LLM_REQUIRED})")
     if req.messages[-1].role != Role.USER:
         raise HTTPException(400, "the last message must be the new user message")
 

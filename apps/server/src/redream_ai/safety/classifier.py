@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any
 
 from ..llm.base import LlmClient
+from ..llm.json_parse import parse_json_object
 from ..models import Language, SafetyCategory, SafetyResponse, SafetyRisk, Stage
 from ..prompts.safety import PROMPT_VERSION, SAFETY_PROMPT_DE, SAFETY_PROMPT_EN
 
@@ -56,6 +56,7 @@ async def classify(
     language: Language,
     stage: Stage | None = None,
     context: str | None = None,
+    json_mode: bool = True,
     fallback_llm: LlmClient | None = None,
     fallback_model: str | None = None,
 ) -> SafetyResponse:
@@ -66,9 +67,13 @@ async def classify(
     terse replies: "It is an 8 out of 10." is a scale answer, not ideation.
     A bare yes / no needs no model call (`_is_bare_answer`).
 
-    Any failure of the primary model, an unusable answer included, goes to
-    `fallback_model` on `fallback_llm` when one is given: the backend blocks
-    the chat turn when this check fails.
+    `json_mode` asks the endpoint for a JSON object (LLM_JSON_MODE); either
+    way the answer is read with `parse_json_object`, so fenced or
+    prose-wrapped JSON passes. An answer without the JSON, or with more than
+    one object (an example in the reasoning must not win), still raises: the
+    backend blocks the chat turn when this check fails. Any failure of the
+    primary model goes to `fallback_model` on `fallback_llm` when one is given
+    (production passes none).
     """
 
     if _is_bare_answer(text):
@@ -90,7 +95,7 @@ async def classify(
     ]
 
     try:
-        return await _ask(llm, model, messages)
+        return await _ask(llm, model, messages, json_mode)
     except Exception as exc:
         if fallback_llm is None or fallback_model is None:
             raise
@@ -100,17 +105,19 @@ async def classify(
             exc,
             fallback_model,
         )
-        return await _ask(fallback_llm, fallback_model, messages)
+        return await _ask(fallback_llm, fallback_model, messages, json_mode)
 
 
-async def _ask(llm: LlmClient, model: str, messages: list[dict[str, Any]]) -> SafetyResponse:
+async def _ask(
+    llm: LlmClient, model: str, messages: list[dict[str, Any]], json_mode: bool
+) -> SafetyResponse:
     content, _usage = await llm.chat(
         model=model,
         messages=messages,
         temperature=0.0,
-        response_format=_RESPONSE_FORMAT,
+        response_format=_RESPONSE_FORMAT if json_mode else None,
     )
-    parsed = json.loads(content)
+    parsed = parse_json_object(content)
     return SafetyResponse(
         risk=SafetyRisk(parsed["risk"]),
         categories=[SafetyCategory(c) for c in parsed.get("categories", [])],

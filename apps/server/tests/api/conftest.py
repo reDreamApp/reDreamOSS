@@ -18,11 +18,18 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 # The developer's local .env may disable the crisis classifier (dev flag);
 # tests always run with the production default (env var beats dotenv).
 os.environ["SAFETY_CLASSIFIER_ENABLED"] = "true"
-# The IRT core builds its agents from the process environment at first import
-# (test_in_process_ai_client imports it). Same throwaway keys as tests/ai's
-# conftest, so `pytest tests/api` alone is pinned like the full run.
+# The IRT core builds its agents from the LLM_* settings at first import
+# (test_in_process_ai_client imports it). Same throwaway endpoint and keys as
+# tests/ai's conftest, so `pytest tests/api` alone is pinned like the full run.
+os.environ.setdefault("LLM_BASE_URL", "http://llm.invalid/v1")
+os.environ.setdefault("LLM_API_KEY", "dummy")
+os.environ.setdefault("LLM_MODEL", "m-large")
+os.environ.setdefault("LLM_SMALL_MODEL", "m-small")
+# STT/TTS still read the provider keys (until S09).
 os.environ.setdefault("SCALEWAY_API_KEY", "test-dummy-key")
 os.environ.setdefault("MISTRAL_API_KEY", "test-dummy-key")
+os.environ["SAFETY_CRITIC_ENABLED"] = "true"
+os.environ["LLM_JSON_MODE"] = "true"
 
 import pytest
 from httpx import ASGITransport, AsyncClient

@@ -8,8 +8,8 @@ mocked at its seams (ported core, entry points, STT/TTS), so nothing reaches a
 provider.
 
 redream_ai is imported inside the tests, never at collection: tests/api's
-conftest (and tests/ai's, in a full run) pins the core's dummy keys before the
-core's first import.
+conftest (and tests/ai's, in a full run) pins the core's dummy LLM endpoint
+before the core's first import.
 """
 
 from __future__ import annotations
@@ -77,19 +77,21 @@ def ai(monkeypatch) -> types.SimpleNamespace:
 
 
 @pytest.fixture
-def llms(ai, monkeypatch) -> tuple[Any, Any]:
-    """FakeLlmClients as the crisis classifier's (Scaleway, Mistral) pair."""
+def safety_llm(ai, monkeypatch) -> Any:
+    """A FakeLlmClient as the crisis classifier's endpoint."""
     from redream_ai.llm.fake_client import FakeLlmClient
 
-    primary, fallback = FakeLlmClient(), FakeLlmClient()
-    monkeypatch.setattr(ai.safety, "build_scaleway_llm_client", lambda: primary)
-    monkeypatch.setattr(ai.safety, "build_mistral_llm_client", lambda: fallback)
-    return primary, fallback
+    llm = FakeLlmClient()
+    monkeypatch.setattr(ai.safety, "build_safety_llm_client", lambda: llm)
+    return llm
 
 
 @pytest.fixture
-def ai_client(llms) -> InProcessAiClient:
+def ai_client(safety_llm) -> InProcessAiClient:
     return InProcessAiClient()
+
+
+_LLM_REQUIRED = "LLM_BASE_URL, LLM_API_KEY, LLM_MODEL and LLM_SMALL_MODEL"
 
 
 # ---------------------------------------------------------------------------
@@ -199,12 +201,11 @@ async def test_chat_stream_splits_multi_frame_chunks(ai, ai_client, monkeypatch)
     assert out == ["data: a", "data: b", "data: c"]
 
 
-async def test_safety_classify_returns_wire_json(ai_client, llms):
+async def test_safety_classify_returns_wire_json(ai_client, safety_llm):
     from redream_ai.config import settings
     from redream_ai.prompts.safety import PROMPT_VERSION
 
-    primary, fallback = llms
-    primary.enqueue(json.dumps({"risk": "high", "categories": ["self_harm"], "confidence": 0.9}))
+    safety_llm.enqueue(json.dumps({"risk": "high", "categories": ["self_harm"], "confidence": 0.9}))
 
     resp = await ai_client.safety_classify(
         {"text": "He hurt me.", "language": "en", "stage": "recording", "context": "And then?"}
@@ -216,16 +217,66 @@ async def test_safety_classify_returns_wire_json(ai_client, llms):
         "confidence": 0.9,
         "prompt_version": PROMPT_VERSION,
     }
-    assert [c["model"] for c in primary.calls] == [settings.scaleway_safety_model]
-    assert fallback.calls == []
+    assert [c["model"] for c in safety_llm.calls] == [settings.safety_model]
 
 
-async def test_safety_classify_unconfigured_is_an_ai_service_error(ai, monkeypatch):
-    monkeypatch.setattr(ai.safety, "build_scaleway_llm_client", lambda: None)
-    monkeypatch.setattr(ai.safety, "build_mistral_llm_client", lambda: None)
+async def test_an_unparseable_crisis_answer_fails_without_fallback(ai_client, safety_llm):
+    """Fail-closed: no JSON object in the answer, no verdict — the route
+    answers 502 and the turn is blocked."""
+    safety_llm.enqueue("I am not sure how to classify this.")
 
-    with pytest.raises(AIServiceError, match="crisis classifier not configured"):
+    with pytest.raises(AIServiceError) as exc_info:
+        await ai_client.safety_classify({"text": "He hurt me.", "language": "en"})
+
+    assert str(exc_info.value) == "safety_classify failed: internal error (ValueError)"
+    assert len(safety_llm.calls) == 1
+
+
+@pytest.mark.parametrize("missing", ["llm_base_url", "llm_api_key", "llm_model", "llm_small_model"])
+async def test_safety_classify_unconfigured_is_an_ai_service_error(ai, monkeypatch, missing):
+    """Any of the four unset gives no client (never a constructor error at
+    startup) and an AIServiceError naming them."""
+    from redream_ai.config import settings
+
+    monkeypatch.setattr(settings, missing, "")
+    assert ai.safety.build_safety_llm_client() is None
+
+    with pytest.raises(AIServiceError) as exc_info:
         await InProcessAiClient().safety_classify({"text": "x", "language": "en"})
+
+    assert str(exc_info.value) == (
+        f"safety_classify failed: crisis classifier not configured (set {_LLM_REQUIRED})"
+    )
+
+
+async def test_chat_unconfigured_names_the_llm_settings(ai, ai_client, monkeypatch):
+    monkeypatch.setattr(ai.irt_app, "routing_agent", None)
+
+    with pytest.raises(AIServiceError) as exc_info:
+        await ai_client.chat(_chat_payload())
+
+    assert str(exc_info.value) == (
+        f"chat failed: 503 IRT agents not configured (set {_LLM_REQUIRED})"
+    )
+
+
+def test_crisis_client_is_built_from_the_llm_settings(ai, monkeypatch):
+    """One client on LLM_BASE_URL with the crisis check's own, shorter timeout."""
+    from redream_ai.config import settings
+    from redream_ai.llm.openai_compatible import OpenAICompatibleLlmClient
+
+    monkeypatch.setattr(settings, "llm_base_url", "https://llm.example.test/v1")
+    monkeypatch.setattr(settings, "llm_api_key", "sk-test")
+    monkeypatch.setattr(settings, "llm_timeout_seconds", 60.0)
+    monkeypatch.setattr(settings, "llm_safety_timeout_seconds", 7.0)
+
+    llm = ai.safety.build_safety_llm_client()
+
+    assert isinstance(llm, OpenAICompatibleLlmClient)
+    assert str(llm._client.base_url) == "https://llm.example.test/v1/"
+    assert llm._client.api_key == "sk-test"
+    assert llm._client.timeout == 7.0
+    assert llm._client.max_retries == 1
 
 
 async def test_transcribe_returns_wire_json(ai, ai_client, monkeypatch):
@@ -295,15 +346,15 @@ def _validation_error() -> ValidationError:
 def _unavailable() -> Exception:
     from redream_ai.llm.base import LlmUnavailableError
 
-    return LlmUnavailableError("Scaleway 503 + Mistral 429")
+    return LlmUnavailableError("LLM endpoint 503")
 
 
-_REQUEST = httpx.Request("POST", "https://api.scaleway.ai/v1/chat/completions")
+_REQUEST = httpx.Request("POST", "http://llm.invalid/v1/chat/completions")
 
 # (exception factory, what the AIServiceError says)
 _FAILURES: list[tuple[Callable[[], Exception], str]] = [
     (lambda: HTTPException(503, "IRT agents not configured"), "503 IRT agents not configured"),
-    (_unavailable, "LLM provider temporarily unavailable: Scaleway 503 + Mistral 429"),
+    (_unavailable, "LLM provider temporarily unavailable: LLM endpoint 503"),
     (lambda: ValueError("unmapped stage"), "internal error (ValueError)"),
     (lambda: TimeoutError(), "internal error (TimeoutError)"),  # not our deadline
     (lambda: openai.APIConnectionError(request=_REQUEST), "internal error (APIConnectionError)"),
@@ -561,7 +612,11 @@ async def test_closing_the_consumer_early_closes_the_ai_stream(ai, ai_client, mo
 # ---------------------------------------------------------------------------
 
 
-async def test_lifespan_builds_the_client_once_and_logs_readiness(ai, llms, monkeypatch, caplog):
+async def test_lifespan_builds_the_client_once_and_logs_readiness(
+    ai, safety_llm, monkeypatch, caplog
+):
+    from redream_ai.config import settings
+
     monkeypatch.setattr(ai_client_mod, "_default_client", None)
     monkeypatch.setattr(ai.irt_app, "safety_critic", None)
 
@@ -574,15 +629,14 @@ async def test_lifespan_builds_the_client_once_and_logs_readiness(ai, llms, monk
     messages = [r.getMessage() for r in caplog.records if r.name == ai_client_mod.__name__]
     assert messages == [
         "IRT pipeline ready (agents=ok, safety_critic=disabled (fail-open))",
-        "crisis classifier ready (Scaleway primary, Mistral fallback)",
+        f"crisis classifier ready (model={settings.safety_model})",
     ]
     assert app.title == "reDreamOSS server"
 
 
 def test_readiness_warns_when_unconfigured(ai, monkeypatch, caplog):
     monkeypatch.setattr(ai.irt_app, "routing_agent", None)
-    monkeypatch.setattr(ai.safety, "build_scaleway_llm_client", lambda: None)
-    monkeypatch.setattr(ai.safety, "build_mistral_llm_client", lambda: None)
+    monkeypatch.setattr(ai.safety, "build_safety_llm_client", lambda: None)
 
     with caplog.at_level(logging.INFO, logger=ai_client_mod.__name__):
         InProcessAiClient().log_readiness()
@@ -596,6 +650,7 @@ def test_readiness_warns_when_unconfigured(ai, monkeypatch, caplog):
         "IRT agents UNCONFIGURED",
         "crisis classifier UNCONFIGURED",
     ]
+    assert all(f"set {_LLM_REQUIRED};" in w for w in warnings), warnings
 
 
 _DOCS_ROUTES = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
@@ -633,11 +688,12 @@ def test_importing_the_app_does_not_import_redream_ai():
 # ---------------------------------------------------------------------------
 
 
-async def test_stream_route_over_the_in_process_client(client, ai, ai_client, llms, monkeypatch):
+async def test_stream_route_over_the_in_process_client(
+    client, ai, ai_client, safety_llm, monkeypatch
+):
     from redream_ai.config import settings
 
-    primary, _ = llms
-    primary.enqueue(json.dumps({"risk": "none", "categories": [], "confidence": 0.9}))
+    safety_llm.enqueue(json.dumps({"risk": "none", "categories": [], "confidence": 0.9}))
 
     async def fake(chat_input, conversation, safety_enabled=True):
         conversation.stages.append("rewriting")
@@ -659,18 +715,17 @@ async def test_stream_route_over_the_in_process_client(client, ai, ai_client, ll
     msgs = (await client.get(f"/api/v1/chats/{chat_id}/messages")).json()
     assert [m["role"] for m in msgs] == ["user", "assistant"]
     # The route's crisis check went through the real client too.
-    assert [c["model"] for c in primary.calls] == [settings.scaleway_safety_model]
+    assert [c["model"] for c in safety_llm.calls] == [settings.safety_model]
 
 
 async def test_stream_route_timeout_is_an_error_frame_and_rollback(
-    client, ai, ai_client, llms, monkeypatch
+    client, ai, ai_client, safety_llm, monkeypatch
 ):
     """A silent AI stream mid-turn: error frame + [DONE], user message rolled
     back — the same path an HTTP read timeout took."""
     from redream_ai.config import settings
 
-    primary, _ = llms
-    primary.enqueue(json.dumps({"risk": "none", "categories": [], "confidence": 0.9}))
+    safety_llm.enqueue(json.dumps({"risk": "none", "categories": [], "confidence": 0.9}))
     monkeypatch.setattr(ai_client_mod, "_CHAT_TIMEOUT", 0.05)
 
     async def fake(chat_input, conversation, safety_enabled=True):
@@ -689,4 +744,4 @@ async def test_stream_route_timeout_is_an_error_frame_and_rollback(
     error = json.loads(bodies[-2])["error"]
     assert error.startswith("chat_stream timed out after")
     assert (await client.get(f"/api/v1/chats/{chat_id}/messages")).json() == []
-    assert [c["model"] for c in primary.calls] == [settings.scaleway_safety_model]
+    assert [c["model"] for c in safety_llm.calls] == [settings.safety_model]

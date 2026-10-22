@@ -161,6 +161,17 @@ async def test_nightmare_summary_prompt_honours_language(monkeypatch, lang, prom
     assert "I was chased through a forest." in stub.calls[0]["prompt"]
 
 
+@pytest.mark.parametrize("reply", ["", "   \n"], ids=["empty", "whitespace"])
+async def test_empty_nightmare_summary_is_none(monkeypatch, reply):
+    """No content (None from the endpoint arrives as "") is no summary: None
+    makes the next turn try again instead of storing an empty one."""
+    monkeypatch.setattr(irt_app, "response_agent", _CaptureAgent(reply))
+    conv = Conversation(session_id="s", language="en")
+    conv.add_message("I was chased through a forest.", "user")
+
+    assert await irt_app.generate_nightmare_summary(conv) is None
+
+
 # --- structured summary extraction works for both languages (fake LLM) ------------
 
 _PROSE = {

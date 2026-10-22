@@ -25,7 +25,8 @@ from dataclasses import dataclass, field
 
 from .graph_definitions import build_clinical_graph, get_correction_strategies
 from .classifier import ClinicalClassifier
-from ..core.agent import Agent, MODELS
+from ..config import settings
+from ..core.agent import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -250,14 +251,13 @@ class SafetyCritic:
         # Initialize or use provided classifier
         self.classifier = classifier or ClinicalClassifier()
         
-        # Mistral Small on Scaleway + greedy decoding for deterministic segmentation,
-        # falling back to Ministral 8B on the direct Mistral API. OR aggregator causes
-        # non-deterministic routing across backends (see System2_CoT_Findings.md §10.3.1).
+        # LLM_SMALL_MODEL + greedy decoding for deterministic segmentation, no
+        # fallback. An aggregator routing across backends is non-deterministic (see
+        # System2_CoT_Findings.md §10.3.1): point LLM_BASE_URL at one backend.
         self.segmenter = Agent(
-            model_config=MODELS["MISTRAL_SMALL"],
+            model=settings.llm_small_model,
             system_prompt=SEGMENTER_PROMPT,
             temperature=0,
-            fallback_model_config=MODELS["MINISTRAL_8B"],
         )
         
         logger.info("SafetyCritic initialized with segmentation pipeline")
@@ -455,7 +455,7 @@ IMPORTANT:
                 node_id, logprobs = await self.classifier.classify_intent(
                     segment.text,
                     context=segment_context,
-                    return_logprobs=True  # Always request logprobs for confidence
+                    return_logprobs=True  # Always return the result (confidence None: no logprobs)
                 )
 
                 if node_id not in self.graph:

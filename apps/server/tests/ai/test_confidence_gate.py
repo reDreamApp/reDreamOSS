@@ -2,12 +2,13 @@
 
 Brief §5 (CHATBOT_INTEGRATION_BRIEF.md): in the clinical rewrite-safety
 classifier (redream_ai.clinical_safety — NOT the ADR 0005 crisis classifier in
-redream_ai.safety), `confidence = None` means logprobs were unavailable (e.g.
-the direct-Mistral fallback answered) and must NOT be gated — the label is
-trusted. `confidence = 0.0` is a genuine failure (fuzzy match / unparseable
-code) and routes the segment to UNCLASSIFIED (fail closed). If a change ever
-collapses None to 0.0, every fallback-answered classification becomes
-UNCLASSIFIED and the bot asks for clarification forever.
+redream_ai.safety), `confidence = None` means logprobs were unavailable and must
+NOT be gated — the label is trusted. Since logprobs are no longer requested (not
+every OpenAI-compatible endpoint has them), None is the production case.
+`confidence = 0.0` is a genuine failure (fuzzy match / unparseable code) and
+routes the segment to UNCLASSIFIED (fail closed). If a change ever collapses
+None to 0.0, every classification becomes UNCLASSIFIED and the bot asks for
+clarification forever.
 """
 
 from __future__ import annotations
@@ -29,8 +30,8 @@ class _ScriptedAgent:
         self._logprobs = logprobs
         self.calls = []
 
-    async def generate(self, prompt, logprobs=False, top_logprobs=None, **kwargs):
-        self.calls.append({"prompt": prompt, "logprobs": logprobs, "top_logprobs": top_logprobs})
+    async def generate(self, prompt, **kwargs):
+        self.calls.append({"prompt": prompt, **kwargs})
         return self._content, {"input": 5, "output": 1, "total": 6}, self._logprobs
 
 
@@ -67,15 +68,15 @@ async def test_valid_code_with_logprobs_has_real_confidence(classifier):
     assert result.confidence == pytest.approx(math.exp(-0.2))
     assert result.mean_logprob == pytest.approx(-0.2)
     assert result.margin == pytest.approx(math.exp(-0.1) - math.exp(-2.5))
-    # The classifier must always request logprobs (with top-5 alternatives)
-    assert classifier.agent.calls[0]["logprobs"] is True
-    assert classifier.agent.calls[0]["top_logprobs"] == 5
+    # The classifier never requests logprobs (the agent could not send them either)
+    assert "logprobs" not in classifier.agent.calls[0]
+    assert "top_logprobs" not in classifier.agent.calls[0]
 
 
 async def test_missing_logprobs_yields_none_confidence_not_zero(classifier):
-    # e.g. the direct-Mistral fallback answered without logprobs → confidence must
-    # be None (unknown), NEVER 0.0 (which would mean "genuine failure" and reroute
-    # the segment to UNCLASSIFIED downstream).
+    # The production case (no logprobs requested) → confidence must be None
+    # (unknown), NEVER 0.0 (which would mean "genuine failure" and reroute the
+    # segment to UNCLASSIFIED downstream).
     classifier.agent = _ScriptedAgent("CONFRONT", logprobs=None)
 
     node_id, result = await classifier.classify_intent("I fight back", return_logprobs=True)

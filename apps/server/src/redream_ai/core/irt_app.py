@@ -1,6 +1,5 @@
 from typing import List, Tuple, AsyncGenerator, Optional
 import contextlib
-import os
 from .models import Conversation, Stage, ChatInput, ChatResponse
 import hashlib
 import logging
@@ -18,39 +17,48 @@ from .prompts import (SYSTEM_PROMPT_TEMPLATES_DE, SYSTEM_PROMPT_TEMPLATES_EN,
                       REWRITING_NOTHING_YET_NOTE_DE, REWRITING_NOTHING_YET_NOTE_EN,
                       REPLAY_CHECK_PROMPT, TALK_GATE_PROMPT)
 
-# API keys come from the process environment only — no .env loading, so a stray
-# .env can never leak real keys into the test process.
+# The LLM endpoint comes from redream_ai.config (LLM_*, environment or .env). The
+# test conftests pin a throwaway endpoint as env vars, which win over any .env.
+from ..config import settings
 
 # Tracing decorators: no-op stand-ins (reDreamOSS has no tracing backend).
 from ..observability import langfuse_context, observe  # noqa: E402
 
 # Language detection removed; language is controlled via override from client
 
-# Import agents AFTER env is loaded so API keys are available during initialization
+# Routing/response agents are built from the LLM_* settings (see agent.py).
 from .agent import routing_agent, response_agent  # noqa: E402
 
 # Get logger instances
 logger = logging.getLogger(__name__)
 
-# Routing/response use Scaleway (primary) + direct Mistral (fallback). Keys are
-# validated at startup (the server's lifespan) via a single check, not as a hard raise at
-# import time — so the module imports cleanly for tests/offline dev. When keys are
-# absent, `routing_agent`/`response_agent` are None (see agent.py) and api.chat
-# raises 503. (Reconciles the §8 import-time asymmetry noted in the brief.)
-if not os.getenv('SCALEWAY_API_KEY') or not os.getenv('MISTRAL_API_KEY'):
-    logger.warning(
-        "SCALEWAY_API_KEY / MISTRAL_API_KEY not both set — IRT agents unavailable "
-        "until configured; /chat will return 503."
-    )
+# The endpoint is checked at startup (the server's lifespan logs readiness), not as
+# a hard raise at import time — so the module imports cleanly for tests/offline dev.
+# When LLM_* is incomplete, `routing_agent`/`response_agent` are None (agent.py
+# warns) and api.chat raises 503. (Reconciles the §8 import-time asymmetry noted in
+# the brief.)
 
-# Initialize safety critic (fail-open: chatbot works without it)
-try:
-    from ..clinical_safety.critic import SafetyCritic, SafetyResult
-    safety_critic = SafetyCritic()
+
+def _build_safety_critic():
+    """The SafetyCritic, or None (fail-open: the chatbot works without it).
+
+    None when SAFETY_CRITIC_ENABLED is false (warned, so a disabled critic is
+    never silent) or when it cannot be built.
+    """
+    if not settings.safety_critic_enabled:
+        logger.warning("SAFETY_CRITIC_ENABLED is false — rewriting turns run without the SafetyCritic.")
+        return None
+    try:
+        from ..clinical_safety.critic import SafetyCritic
+        critic = SafetyCritic()
+    except Exception as e:
+        logger.warning(f"SafetyCritic initialization failed: {e}. Safety checks disabled.")
+        return None
     logger.info("SafetyCritic initialized successfully")
-except Exception as e:
-    safety_critic = None
-    logger.warning(f"SafetyCritic initialization failed: {e}. Safety checks disabled.")
+    return critic
+
+
+safety_critic = _build_safety_critic()
 
 language = "de"
 
@@ -359,7 +367,8 @@ async def generate_nightmare_summary(conversation: Conversation) -> Optional[str
         summary, usage, _ = await response_agent.generate(prompt, system_prompt=summary_prompt)
 
         logger.info(f"Generated nightmare summary ({len(summary)} chars)")
-        return summary.strip()
+        # An empty answer is no summary: None makes the next turn try again.
+        return summary.strip() or None
 
     except Exception as e:
         logger.error(f"Failed to generate nightmare summary: {e}")

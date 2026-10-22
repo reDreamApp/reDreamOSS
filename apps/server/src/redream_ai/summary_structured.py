@@ -3,7 +3,8 @@
 The ported IRT summary stage emits labeled prose (Title:/Rewritten Dream:/Original Dream:)
 for the user to read. This module runs a small JSON-mode pass over that prose to ALSO emit
 the structured fields the backend persists into `dreams` — without string-matching the
-labels in the backend (the `_parse_summary` antipattern ADR 0003 retired).
+labels in the backend (the `_parse_summary` antipattern ADR 0003 retired). JSON mode is
+requested only when LLM_JSON_MODE is on; fenced or prose-wrapped JSON parses either way.
 
 Failure is graceful: returns None, and the prose still reaches the user (structured=None
 means "not extracted", the backend simply doesn't get a Dream row this turn).
@@ -14,10 +15,11 @@ left None here — the 0-10 rating is not collected as a routed conversational s
 
 from __future__ import annotations
 
-import json
 import logging
 
+from .config import settings
 from .core import agent as core_agent
+from .llm.json_parse import parse_json_object
 from .models import Language, SummaryStructured
 
 log = logging.getLogger(__name__)
@@ -46,9 +48,9 @@ async def extract_summary_structured(
         content, _usage, _ = await agent.generate(
             prose_summary,
             system_prompt=_EXTRACT_SYSTEM_PROMPT,
-            response_format=_JSON_OBJECT,
+            response_format=_JSON_OBJECT if settings.llm_json_mode else None,
         )
-        data = json.loads(content)
+        data = parse_json_object(content)
         original = str(data["original_summary"])
         return SummaryStructured(
             title=str(data["title"]),

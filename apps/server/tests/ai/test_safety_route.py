@@ -1,7 +1,7 @@
 """`safety_classify` — crisis pre-classifier (ADR 0005).
 
 This path is independent of the ported IRT core and must keep working after the
-core replacement. FakeLlmClients are passed in as the two providers (no network).
+core replacement. A FakeLlmClient is passed in as the endpoint (no network).
 """
 
 from __future__ import annotations
@@ -16,30 +16,17 @@ from redream_ai.api.safety import safety_classify
 from redream_ai.config import settings
 from redream_ai.llm.base import LlmClient, LlmUnavailableError
 from redream_ai.llm.fake_client import FakeLlmClient
-from redream_ai.models import SafetyRequest
+from redream_ai.models import Language, SafetyRequest, SafetyRisk
+from redream_ai.safety import classify as classify_text
 
 
 @pytest.fixture
-def fallback_llm() -> FakeLlmClient:
-    return FakeLlmClient()
+def classify(fake_llm):
+    """`fake_llm` stands in for the LLM_* endpoint; it can be swapped per call.
+    Returns the response as wire JSON."""
 
-
-@pytest.fixture
-def classify(fake_llm, fallback_llm):
-    """`fake_llm` stands in for Scaleway, `fallback_llm` for direct Mistral.
-    Either can be swapped per call; returns the response as wire JSON."""
-
-    async def run(
-        body: dict[str, Any],
-        *,
-        llm: LlmClient | None = None,
-        fallback: LlmClient | None = None,
-    ) -> dict[str, Any]:
-        resp = await safety_classify(
-            SafetyRequest.model_validate(body),
-            llm=llm or fake_llm,
-            fallback_llm=fallback or fallback_llm,
-        )
+    async def run(body: dict[str, Any], *, llm: LlmClient | None = None) -> dict[str, Any]:
+        resp = await safety_classify(SafetyRequest.model_validate(body), llm=llm or fake_llm)
         return resp.model_dump(mode="json")
 
     return run
@@ -51,49 +38,60 @@ class _DownLlm(FakeLlmClient):
 
 
 _NONE = json.dumps({"risk": "none", "categories": [], "confidence": 0.9})
+_HIGH = json.dumps({"risk": "high", "categories": ["suicidal_ideation"], "confidence": 0.9})
 
 
-def test_safety_model_pins():
-    """ADR 0010 (2026-10-21 amendment): a changed default is a model change
-    and needs the ADR and a live eval run."""
-    from redream_ai.config import Settings
-
-    fields = Settings.model_fields
-    assert fields["scaleway_safety_model"].default == "mistral-small-3.2-24b-instruct-2506"
-    assert fields["mistral_safety_model"].default == "ministral-8b-2512"
-
-
-async def test_scaleway_answers_first(classify, fake_llm, fallback_llm):
+async def test_check_runs_on_the_safety_model(classify, fake_llm, monkeypatch):
+    monkeypatch.setattr(settings, "llm_safety_model", "guard-model")
     fake_llm.enqueue(_NONE)
     await classify({"text": "I dreamt of a forest.", "language": "en"})
-    assert [c["model"] for c in fake_llm.calls] == [settings.scaleway_safety_model]
-    assert fallback_llm.calls == []
+    assert [c["model"] for c in fake_llm.calls] == ["guard-model"]
+    assert fake_llm.calls[0]["temperature"] == 0.0
 
 
-@pytest.mark.parametrize("primary_reply", [None, "Sorry, I cannot help with that."])
-async def test_mistral_answers_when_scaleway_fails(classify, fake_llm, fallback_llm, primary_reply):
-    """An outage and an answer that is not the JSON both go to the fallback:
-    the backend blocks the chat turn when this check fails."""
-    primary = _DownLlm() if primary_reply is None else fake_llm
-    if primary_reply is not None:
-        fake_llm.enqueue(primary_reply)
-    fallback_llm.enqueue(
-        json.dumps({"risk": "high", "categories": ["suicidal_ideation"], "confidence": 0.9})
+async def test_safety_model_defaults_to_the_small_model(classify, fake_llm, monkeypatch):
+    monkeypatch.setattr(settings, "llm_small_model", "small-model")
+    monkeypatch.setattr(settings, "llm_safety_model", "")
+    fake_llm.enqueue(_NONE)
+    await classify({"text": "I dreamt of a forest.", "language": "en"})
+    assert [c["model"] for c in fake_llm.calls] == ["small-model"]
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [(None, LlmUnavailableError), ("Sorry, I cannot help with that.", ValueError)],
+    ids=["outage", "unusable-answer"],
+)
+async def test_a_failed_check_raises_without_fallback(classify, fake_llm, reply, expected):
+    """An outage and an answer that is not the JSON both fail the check: there
+    is no fallback, and the backend blocks the chat turn (502). An outage stays
+    LlmUnavailableError, which the backend reports as the provider being down."""
+    llm = _DownLlm() if reply is None else fake_llm
+    if reply is not None:
+        fake_llm.enqueue(reply)
+    with pytest.raises(expected):
+        await classify({"text": "I don't want to be here anymore.", "language": "en"}, llm=llm)
+
+
+@pytest.mark.parametrize("reply", [None, "Sorry, I cannot help with that."], ids=["down", "prose"])
+async def test_classify_keeps_an_optional_fallback(fake_llm, reply):
+    """Production passes none; `classify` itself still takes one, for an
+    outage and for an unusable answer alike."""
+    primary = _DownLlm() if reply is None else fake_llm
+    if reply is not None:
+        fake_llm.enqueue(reply)
+    fallback = FakeLlmClient()
+    fallback.enqueue(_HIGH)
+    resp = await classify_text(
+        llm=primary,
+        model="m-small",
+        fallback_llm=fallback,
+        fallback_model="m-other",
+        text="I don't want to be here anymore.",
+        language=Language.EN,
     )
-    body = await classify(
-        {"text": "I don't want to be here anymore.", "language": "en"}, llm=primary
-    )
-    assert body["risk"] == "high"
-    assert [c["model"] for c in fallback_llm.calls] == [settings.mistral_safety_model]
-
-
-async def test_both_providers_down_raises_unavailable(classify):
-    with pytest.raises(LlmUnavailableError):
-        await classify(
-            {"text": "I dreamt of a forest.", "language": "en"},
-            llm=_DownLlm(),
-            fallback=_DownLlm(),
-        )
+    assert resp.risk == SafetyRisk.HIGH
+    assert [c["model"] for c in fallback.calls] == ["m-other"]
 
 
 async def test_safety_classify_low_risk(classify, fake_llm):

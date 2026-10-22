@@ -1,12 +1,12 @@
 """Live regression eval for the crisis classifier prompt (ADR 0005).
 
-Hits the REAL primary model on Scaleway (needs SCALEWAY_API_KEY, and
-SCALEWAY_PROJECT_ID for a project-restricted key, in apps/server/.env) — this is
-deliberately not a pytest: `make ai-test` stays offline. Run on every edit of
-`prompts/safety.py`, once per model:
+Hits the REAL model behind LLM_BASE_URL (the LLM_* settings, from the
+environment or apps/server/.env) — this is deliberately not a pytest: `make
+ai-test` stays offline. Run on every edit of `prompts/safety.py`, once per
+model you deploy:
 
     cd apps/server && uv run python evals/safety_regression.py
-    cd apps/server && uv run python evals/safety_regression.py --fallback   # direct Mistral
+    cd apps/server && LLM_SAFETY_MODEL=<other model> uv run python evals/safety_regression.py
 
 The fp-meta-* cases are the 2026-07-13 incident: a frustrated meta-question at
 the bot ("who are you even") classified high/0.95 under safety-v0.3.0 when
@@ -17,16 +17,14 @@ app_mono's run_evals.py (2026-10). Exit code 0 = all pass.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from redream_ai.llm.base import LlmClient
-from redream_ai.llm.mistral_client import MistralLlmClient
-from redream_ai.llm.scaleway_client import ScalewayLlmClient
+from redream_ai.config import LLM_REQUIRED, settings
+from redream_ai.llm.openai_compatible import OpenAICompatibleLlmClient
 from redream_ai.models import Language, Stage
 from redream_ai.prompts.safety import PROMPT_VERSION
 from redream_ai.safety.classifier import classify
@@ -352,37 +350,26 @@ CASES.append(
 )
 
 
-def _load_dotenv(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip('"'))
-
-
 async def main() -> int:
-    llm: LlmClient
-    try:
-        if "--fallback" in sys.argv[1:]:
-            model = os.environ.get("MISTRAL_SAFETY_MODEL", "ministral-8b-2512")
-            llm = MistralLlmClient(api_key=os.environ.get("MISTRAL_API_KEY", ""))
-        else:
-            model = os.environ.get("SCALEWAY_SAFETY_MODEL", "mistral-small-3.2-24b-instruct-2506")
-            llm = ScalewayLlmClient(
-                os.environ.get("SCALEWAY_API_KEY", ""), os.environ.get("SCALEWAY_PROJECT_ID", "")
-            )
-    except ValueError as exc:  # the key is missing
-        print(f"{exc} (apps/server/.env) — cannot run live eval")
+    if not settings.llm_configured:
+        print(f"{LLM_REQUIRED} must be set (apps/server/.env) — cannot run live eval")
         return 2
-    print(f"prompt={PROMPT_VERSION}  model={model}  cases={len(CASES)}\n")
+    model = settings.safety_model
+    # The client production builds (redream_ai.api.safety.build_safety_llm_client).
+    llm = OpenAICompatibleLlmClient(
+        settings.llm_base_url, settings.llm_api_key, timeout=settings.llm_safety_timeout_seconds
+    )
+    print(
+        f"prompt={PROMPT_VERSION}  model={model}  json_mode={settings.llm_json_mode}  "
+        f"cases={len(CASES)}\n"
+    )
 
     failures = 0
     for case in CASES:
         result = await classify(
             llm=llm,
             model=model,
+            json_mode=settings.llm_json_mode,
             text=case.text,
             language=case.language,
             stage=case.stage,
@@ -407,5 +394,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    _load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     raise SystemExit(asyncio.run(main()))

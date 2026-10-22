@@ -23,7 +23,7 @@ from fastapi import HTTPException
 
 import redream_ai.api.chat as chatmod
 from redream_ai.core import irt_app
-from redream_ai.core.agent import MODELS, Agent
+from redream_ai.core.agent import Agent
 from redream_ai.models import ChatRequest, SummaryStructured
 
 REQ = {"messages": [{"role": "user", "content": "I turn and face it"}], "language": "en"}
@@ -266,7 +266,7 @@ async def test_closing_early_closes_the_provider_stream(agents, monkeypatch, clo
     async def create(**kwargs):
         return provider_stream
 
-    response_agent = Agent(MODELS["MISTRAL_LARGE"], "system prompt")
+    response_agent = Agent("m-large", "system prompt")
     response_agent.client = types.SimpleNamespace(
         chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
     )

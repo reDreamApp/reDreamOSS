@@ -17,13 +17,10 @@ dependencies = [
     "cachetools>=5.5",
     # Multipart form parsing for the /api/v1/audio/transcribe upload route.
     "python-multipart>=0.0.32",
-    "mistralai>=1.2,<2",
-    # Ported IRT chatbot core (redream_ai/core, redream_ai/clinical_safety):
-    # OpenAI-compatible SDK drives Scaleway (primary) + direct Mistral (fallback);
-    # groq SDK is referenced by the registry but unused at runtime; networkx builds
-    # the clinical knowledge graph.
+    # The OpenAI SDK drives every chat call (core agents, SafetyCritic, crisis
+    # classifier) against the OpenAI-compatible endpoint at LLM_BASE_URL;
+    # networkx builds the clinical knowledge graph.
     "openai>=1.40",
-    "groq>=0.11",
     "networkx>=3.2",
 ]
 
@@ -79,7 +76,7 @@ mypy_path = "src"
 
 # Third-party SDKs used only by the vendored core that ship no type stubs.
 [[tool.mypy.overrides]]
-module = ["groq.*", "networkx.*"]
+module = ["networkx.*"]
 ignore_missing_imports = true
 
 # Vendored: ported IRT core + safety engine (copied verbatim; not type-clean by
