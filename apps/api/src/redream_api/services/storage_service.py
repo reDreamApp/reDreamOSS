@@ -175,16 +175,3 @@ async def _move_legacy(client: httpx.AsyncClient, source: str, destination: str)
             json={"prefixes": [source]},
         )
         removed.raise_for_status()
-
-
-async def revoke_legacy_audio_objects() -> None:
-    """Rotate all legacy objects, including audio from previous dream revisions."""
-    if not settings.supabase_url or not settings.supabase_service_role_key:
-        raise ValueError("storage credentials required for legacy link revocation")
-    async with httpx.AsyncClient(timeout=_TIMEOUT, transport=_transport) as client:
-        # Collect before moving, so pagination isn't invalidated by renames.
-        files = await _list_files(client, "users", recursive=True)
-        for source in files:
-            folder, _, name = source.rpartition("/")
-            if name.endswith(".mp3") and not name.startswith("v2-"):
-                await _move_legacy(client, source, f"{folder}/v2-{name}")

@@ -31,12 +31,10 @@ class Settings(BaseSettings):
     supabase_jwt_algorithms: str = "ES256"
 
     # Reports + moderation (ADR 0006)
-    report_retention_days: int = 180
     report_context_before: int = 2
     report_context_after: int = 2
     report_rate_limit_count: int = 5
     report_rate_limit_window_minutes: int = 10
-    report_internal_action_key: str = ""
     report_action_base_url: str = ""
     report_notification_email: str = ""
     report_notification_email_from: str = ""
@@ -76,7 +74,6 @@ class Settings(BaseSettings):
     langfuse_database_url: str = ""
 
     # Runtime
-    environment: str = "development"
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(
@@ -84,17 +81,6 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
-
-    @field_validator("consent_version")
-    @classmethod
-    def _current_consent(cls, value: str) -> str:
-        return "2026-10-07" if value == "2026-10-03" else value
-
-    @field_validator("rehearsal_url_ttl_seconds", mode="before")
-    @classmethod
-    def _migrate_audio_ttl(cls, value: object) -> object:
-        # Legacy hosts explicitly configured a year. Migrate that value safely.
-        return 300 if isinstance(value, (str, int)) and int(value) > 3600 else value
 
     @field_validator("database_url")
     @classmethod

@@ -1,9 +1,0 @@
-#cloud-config
-# First-boot user-data for the production box. infra/terraform/compute.tf
-# passes it to the instance; it installs Docker and nothing else. Everything
-# after that is infra/bootstrap.sh (infra/README.md, "First deploy").
-package_update: true
-runcmd:
-  - curl -fsSL https://get.docker.com | sh
-  - systemctl enable docker
-  - systemctl start docker
