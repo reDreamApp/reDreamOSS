@@ -1,22 +1,13 @@
 """Regression tests for security boundaries (no network or live services)."""
 
-import asyncio
-import time
-from urllib.parse import parse_qs, urlsplit
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
 import pytest
-from sqlalchemy import func, select
 
 from redream_api.core import request_limits
 from redream_api.core.config import settings
-from redream_api.db.models.chat_message import ChatMessage
-from redream_api.db.models.content_report import ContentReport
-from redream_api.db.models.report_action import ReportAction
-from redream_api.services import email_notification, storage_service
-
-from .conftest import start_chat
+from redream_api.services import storage_service
 
 
 async def test_chunked_json_is_bounded_before_parsing(client, monkeypatch):
@@ -59,76 +50,6 @@ async def test_content_length_cannot_bypass_or_crash_limit(client):
         "/api/v1/audio/transcribe", content=b"x", headers={"Content-Length": str(30 * 1024 * 1024)}
     )
     assert r.status_code == 413
-
-
-async def _report(client, fake_ai):
-    fake_ai.queue_chat(
-        {
-            "stage": "recording",
-            "response": "Continue",
-            "usage": {"input_tokens": 10, "output_tokens": 10},
-        }
-    )
-    chat_id = await start_chat(client)
-    msg = await client.post(f"/api/v1/chats/{chat_id}/message", json={"content": "Dream text"})
-    message_id = UUID(msg.json()["user_message"]["id"])
-    report = await client.post(
-        "/api/v1/reports/ai-content",
-        json={
-            "chat_id": chat_id,
-            "message_id": str(message_id),
-            "target_role": "user",
-            "reason": "other",
-        },
-    )
-    assert report.status_code == 201, report.text
-    return UUID(report.json()["id"]), message_id
-
-
-def _link(action, report_id, message_id=None):
-    url = urlsplit(email_notification._signed_action_url(action, report_id, message_id))
-    return url.path, {key: values[0] for key, values in parse_qs(url.query).items()}
-
-
-async def test_moderation_get_confirms_post_consumes_once(client, db_session_maker, fake_ai):
-    report_id, _ = await _report(client, fake_ai)
-    path, fields = _link("resolve", report_id)
-    page = await client.get(path, params=fields)
-    assert page.status_code == 200 and 'method="post"' in page.text
-    assert page.headers["referrer-policy"] == "no-referrer"
-    async with db_session_maker() as db:
-        assert (await db.get(ContentReport, report_id)).status == "new"
-        assert await db.scalar(select(func.count()).select_from(ReportAction)) == 0
-    assert (await client.post(path, data=fields)).status_code == 200
-    assert (await client.post(path, data=fields)).status_code == 409
-    async with db_session_maker() as db:
-        assert (await db.get(ContentReport, report_id)).status == "resolved"
-        assert await db.scalar(select(func.count()).select_from(ReportAction)) == 1
-
-
-async def test_moderation_rejects_expired_tampered_and_empty_secret(client, monkeypatch):
-    report_id = uuid4()
-    path, fields = _link("resolve", report_id)
-    fields["expires"] = str(int(time.time()) - 1)
-    assert (await client.get(path, params=fields)).status_code == 403
-    path, fields = _link("resolve", report_id)
-    fields["nonce"] = "x" * 32
-    assert (await client.get(path, params=fields)).status_code == 403
-    path, fields = _link("resolve", report_id)
-    monkeypatch.setattr(settings, "report_notification_hmac_secret", "")
-    assert (await client.get(path, params=fields)).status_code == 403
-
-
-async def test_hide_is_atomic_and_owner_message_bound(client, db_session_maker, fake_ai):
-    report_id, message_id = await _report(client, fake_ai)
-    path, fields = _link("hide", report_id, uuid4())
-    assert (await client.post(path, data=fields)).status_code == 403
-    path, fields = _link("hide", report_id, message_id)
-    responses = await asyncio.gather(client.post(path, data=fields), client.post(path, data=fields))
-    assert sorted(r.status_code for r in responses) == [200, 409]
-    async with db_session_maker() as db:
-        assert (await db.get(ChatMessage, message_id)).visibility_status == "hidden"
-        assert await db.scalar(select(func.count()).select_from(ReportAction)) == 1
 
 
 async def test_audio_refresh_moves_legacy_path_and_signs_shortly(monkeypatch):

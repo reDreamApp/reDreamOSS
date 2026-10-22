@@ -30,24 +30,6 @@ class Settings(BaseSettings):
     supabase_jwt_aud: str = "authenticated"
     supabase_jwt_algorithms: str = "ES256"
 
-    # Reports + moderation (ADR 0006)
-    report_context_before: int = 2
-    report_context_after: int = 2
-    report_rate_limit_count: int = 5
-    report_rate_limit_window_minutes: int = 10
-    report_action_base_url: str = ""
-    report_notification_email: str = ""
-    report_notification_email_from: str = ""
-    report_notification_hmac_secret: str = ""
-    report_action_ttl_seconds: int = Field(default=86400, ge=60, le=604800)
-
-    # SMTP
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_use_tls: bool = True
-
     # Art. 9 consent — the consent-text version users must have granted.
     # Bump ONLY on material changes to the consent copy (new processor, new
     # purpose): a bump forces every user through re-consent on next launch.

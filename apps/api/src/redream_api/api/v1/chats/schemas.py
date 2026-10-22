@@ -34,7 +34,6 @@ class ChatMessageOut(BaseModel):
     role: str
     content: str
     stage: str | None
-    visibility_status: str
     created_at: datetime
 
 

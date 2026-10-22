@@ -7,10 +7,8 @@ from . import (
     dreams,
     exports,
     health,
-    help_center,
     profile,
     progress,
-    reports,
     users,
 )
 
@@ -21,9 +19,7 @@ __all__ = [
     "dreams",
     "exports",
     "health",
-    "help_center",
     "profile",
     "progress",
-    "reports",
     "users",
 ]

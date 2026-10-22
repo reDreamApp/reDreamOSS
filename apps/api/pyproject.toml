@@ -16,7 +16,6 @@ dependencies = [
     "httpx>=0.27",
     "cachetools>=5.5",
     "python-dotenv>=1.0",
-    "aiosmtplib>=3.0",
     # Multipart form parsing for the /audio/transcribe upload route.
     "python-multipart>=0.0.32",
 ]

@@ -25,12 +25,6 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(String, nullable=False)
     stage: Mapped[str | None] = mapped_column(String)
 
-    visibility_status: Mapped[str] = mapped_column(
-        String, nullable=False, default="visible", index=True
-    )
-    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    hidden_reason: Mapped[str | None] = mapped_column(String)
-    hidden_by_report_id: Mapped[UUID | None] = mapped_column()
     safety_flagged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     prompt_version: Mapped[str | None] = mapped_column(String)
 

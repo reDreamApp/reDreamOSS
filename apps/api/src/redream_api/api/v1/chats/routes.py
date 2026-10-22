@@ -2,8 +2,8 @@
 
 Flow for `POST /chats/{id}/message`:
   1. Persist user message.
-  2. Call AI `/safety/classify` (ADR 0005). If risk=high: write safety_event,
-     mark user message as flagged, return helpline payload, do NOT advance.
+  2. Call AI `/safety/classify` (ADR 0005). If risk=high: mark user message as
+     flagged, return helpline payload, do NOT advance.
   3. Else: call AI `/chat` with the FULL history (stateless AI, ADR 0002).
   4. Persist AI message with `prompt_version`.
   5. Update `chat.current_stage` from the response. Set `is_done` if final.
@@ -33,12 +33,10 @@ from ....core.dependencies import get_current_user, get_db, require_consent
 from ....db.models.chat import Chat
 from ....db.models.chat_message import ChatMessage
 from ....db.models.dream import Dream
-from ....db.models.safety_event import SafetyEvent
 from ....db.models.user import User
 from ....db.repositories.chat_message_repo import ChatMessageRepo
 from ....db.repositories.chat_repo import ChatRepo
 from ....db.repositories.dream_repo import DreamRepo
-from ....db.repositories.safety_event_repo import SafetyEventRepo
 from ....services.ai_client import AIServiceError, BaseAiClient, get_ai_client
 from .schemas import (
     ChatIntensityRequest,
@@ -55,8 +53,6 @@ from .schemas import (
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chats", tags=["chats"])
-
-_HIDDEN_PLACEHOLDER = "[Message hidden by moderation]"
 
 _TITLE_MAX_LEN = 60
 
@@ -111,13 +107,11 @@ def _extract_intensity(structured: dict[str, object], history: list[ChatMessage]
 
 
 def _to_message_out(msg: ChatMessage) -> ChatMessageOut:
-    content = _HIDDEN_PLACEHOLDER if msg.visibility_status == "hidden" else msg.content
     return ChatMessageOut(
         id=msg.id,
         role=msg.role,
-        content=content,
+        content=msg.content,
         stage=msg.stage,
-        visibility_status=msg.visibility_status,
         created_at=msg.created_at,
     )
 
@@ -245,7 +239,8 @@ async def _pre_turn(
     ai: BaseAiClient,
 ) -> _TurnSetup:
     """Shared pre-AI gates: 404/409 → persist user message → title → safety
-    classifier (ADR 0005, 502 on failure, high-risk short-circuit).
+    classifier (ADR 0005, 502 on failure with the user message dropped,
+    high-risk short-circuit).
 
     Raises HTTPException for every failure, so the streaming route runs this
     BEFORE the response starts and errors arrive as plain JSON, exactly like
@@ -293,11 +288,7 @@ async def _pre_turn(
             safety_payload=None,
         )
     last_assistant = next(
-        (
-            m.content
-            for m in reversed(history_msgs)
-            if m.role == "assistant" and m.visibility_status == "visible"
-        ),
+        (m.content for m in reversed(history_msgs) if m.role == "assistant"),
         None,
     )
     try:
@@ -310,24 +301,17 @@ async def _pre_turn(
             }
         )
     except AIServiceError as exc:
+        # Same cleanup as the chat-failure path: the turn never ran, and an
+        # orphaned user message would be replayed alongside the client's retry.
+        await msg_repo.delete(user_msg)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"safety: {exc}") from exc
 
     safety_payload: SafetyEventPayload | None = None
     if safety.get("risk") == "high":
         user_msg.safety_flagged = True
         await db.commit()
-        await SafetyEventRepo(db).create(
-            SafetyEvent(
-                user_id=user.id,
-                chat_id=chat.id,
-                message_id=user_msg.id,
-                risk="high",
-                categories=list(safety.get("categories", [])),
-                confidence=float(safety.get("confidence", 0.0)),
-                action_taken="helpline_shown",
-                prompt_version=str(safety.get("prompt_version", "unknown")),
-            )
-        )
+        # No ids, categories or text: logs outlive account deletion.
+        log.warning("crisis check: high risk")
         safety_payload = SafetyEventPayload(
             risk="high",
             categories=list(safety.get("categories", [])),
@@ -344,7 +328,7 @@ async def _pre_turn(
 
 
 def _ai_chat_payload(chat: Chat, history_msgs: list[ChatMessage]) -> dict[str, Any]:
-    """The stateless AI request (ADR 0002): full visible history + echo state.
+    """The stateless AI request (ADR 0002): full history + echo state.
 
     Safety-flagged messages got a helpline, not an AI turn — replaying them
     into later prompts would re-inject crisis content the flow already
@@ -362,7 +346,7 @@ def _ai_chat_payload(chat: Chat, history_msgs: list[ChatMessage]) -> dict[str, A
                 "language": chat.language,
             }
             for m in history_msgs
-            if m.visibility_status == "visible" and not m.safety_flagged
+            if not m.safety_flagged
         ],
         "language": chat.language,
         "session_id": str(chat.id),
@@ -589,8 +573,8 @@ async def _stream_ai_turn(
         # so the orphan is never replayed into the next turn's history; once
         # finalize has begun, keep whatever committed (the client's refetch
         # shows the completed turn). The high-risk safety path never rolls
-        # back: the flagged message + safety_events row are moderation
-        # records (ADR 0005) and must survive a disconnect.
+        # back: the flagged message is the turn the helpline answered
+        # (ADR 0005) and must survive a disconnect.
         if setup.safety_payload is None and not finalize_started:
             await _rollback_user_msg()
         raise

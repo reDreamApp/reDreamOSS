@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import logging
+
+import pytest
 from sqlalchemy import select
 
 from redream_api.db.models.chat_message import ChatMessage
-from redream_api.db.models.safety_event import SafetyEvent
+from redream_api.services.ai_client import AIServiceError
 
 from .conftest import FakeAiClient, start_chat
 
 
-async def test_high_risk_input_skips_chat_and_logs_safety_event(
-    client, fake_ai: FakeAiClient, db_session_maker
+async def test_high_risk_input_skips_chat_and_flags_message(
+    client, fake_ai: FakeAiClient, db_session_maker, caplog: pytest.LogCaptureFixture
 ) -> None:
     chat_id = await start_chat(client)
+    caplog.set_level(logging.WARNING)
 
     fake_ai.queue_safety(
         {
@@ -35,19 +39,22 @@ async def test_high_risk_input_skips_chat_and_logs_safety_event(
     assert body["safety_event"] is not None
     assert body["safety_event"]["risk"] == "high"
     assert body["safety_event"]["categories"] == ["suicidal_ideation"]
+    assert body["safety_event"]["confidence"] == 0.92
+    assert body["safety_event"]["message"], "helpline text must be returned (ADR 0005)"
     assert body["stage"] == "recording", "stage must NOT advance on high-risk"
 
     # Verify the AI service's /chat was not called.
     chat_calls = [c for c in fake_ai.calls if c["method"] == "chat"]
     assert chat_calls == []
 
-    # Verify a safety_events row was written.
-    async with db_session_maker() as session:
-        events = (await session.scalars(select(SafetyEvent))).all()
-    assert len(events) == 1
-    assert events[0].risk == "high"
-    assert events[0].confidence == 0.92
-    assert events[0].action_taken == "helpline_shown"
+    # One content-free warning: logs outlive account deletion, so no chat id,
+    # user id, categories or message text.
+    warnings = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.name.startswith("redream_api") and rec.levelno >= logging.WARNING
+    ]
+    assert warnings == ["crisis check: high risk"]
 
     # The user message should be persisted with safety_flagged=True.
     async with db_session_maker() as session:
@@ -56,6 +63,26 @@ async def test_high_risk_input_skips_chat_and_logs_safety_event(
         ).all()
     assert len(msgs) == 1
     assert msgs[0].safety_flagged is True
+
+
+async def test_safety_failure_removes_orphaned_user_message(
+    client, fake_ai: FakeAiClient
+) -> None:
+    """Parity with the chat-failure path: a 502 from the crisis check must not
+    leave the user message behind to be replayed alongside the retry."""
+    chat_id = await start_chat(client)
+
+    fake_ai.queue_safety_error(AIServiceError("/safety/classify failed: 503"))
+    r = await client.post(
+        f"/api/v1/chats/{chat_id}/message", json={"content": "lost turn"}
+    )
+    assert r.status_code == 502
+    assert r.json()["detail"].startswith("safety: ")
+    assert all(c["method"] != "chat" for c in fake_ai.calls)
+
+    r = await client.get(f"/api/v1/chats/{chat_id}/messages")
+    assert r.status_code == 200
+    assert r.json() == [], "a turn that failed the crisis check must not linger in history"
 
 
 async def test_low_risk_input_proceeds_to_chat(client, fake_ai: FakeAiClient) -> None:

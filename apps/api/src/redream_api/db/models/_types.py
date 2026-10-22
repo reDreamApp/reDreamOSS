@@ -7,14 +7,11 @@ the full test suite with `aiosqlite` without dragging in a real Postgres.
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, BigInteger, Integer, String
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy import JSON, BigInteger, Integer
+from sqlalchemy.dialects.postgresql import JSONB
 
 # JSON column — JSONB on Postgres, JSON on SQLite.
 JsonCol = JSONB().with_variant(JSON(), "sqlite")
-
-# String[] column — TEXT[] on Postgres, JSON on SQLite (list of strings).
-StringArrayCol = ARRAY(String).with_variant(JSON(), "sqlite")
 
 # Auto-incrementing primary key — BIGINT on Postgres (BIGSERIAL semantics),
 # INTEGER on SQLite (only INTEGER PRIMARY KEY triggers SQLite's rowid

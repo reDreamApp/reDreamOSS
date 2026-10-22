@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from .internal import moderation
 from .v1 import (
     audio,
     auth,
@@ -12,10 +11,8 @@ from .v1 import (
     dreams,
     exports,
     health,
-    help_center,
     profile,
     progress,
-    reports,
     users,
 )
 
@@ -28,10 +25,4 @@ router_v1.include_router(dreams.router)
 router_v1.include_router(chats.router)
 router_v1.include_router(audio.router)
 router_v1.include_router(progress.router)
-router_v1.include_router(reports.router)
 router_v1.include_router(exports.router)
-router_v1.include_router(help_center.router)
-
-
-router_internal = APIRouter()
-router_internal.include_router(moderation.router)

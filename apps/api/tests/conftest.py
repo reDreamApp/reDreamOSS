@@ -15,8 +15,6 @@ from uuid import uuid4
 
 # Set env BEFORE importing redream_api so the global Settings constructs cleanly.
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
-os.environ.setdefault("REPORT_NOTIFICATION_HMAC_SECRET", "test-secret-do-not-use-in-prod")
-os.environ.setdefault("REPORT_ACTION_BASE_URL", "http://test/internal")
 # The developer's local .env may disable the crisis classifier (dev flag);
 # tests always run with the production default (env var beats dotenv).
 os.environ["SAFETY_CLASSIFIER_ENABLED"] = "true"
@@ -82,6 +80,10 @@ class FakeAiClient:
         """Queue an exception to be raised by the next `chat` call."""
         self._chat.append({"__raise__": exc})
 
+    def queue_safety_error(self, exc: Exception) -> None:
+        """Queue an exception to be raised by the next `safety_classify` call."""
+        self._safety.append({"__raise__": exc})
+
     def queue_transcribe_error(self, exc: Exception) -> None:
         """Queue an exception to be raised by the next `transcribe` call."""
         self._transcribe.append({"__raise__": exc})
@@ -114,7 +116,10 @@ class FakeAiClient:
                 "confidence": 0.0,
                 "prompt_version": "fake-safety-v0",
             }
-        return self._safety.pop(0)
+        response = self._safety.pop(0)
+        if "__raise__" in response:
+            raise response["__raise__"]
+        return response
 
     async def transcribe(self, *, file_name: str, audio_bytes: bytes) -> dict[str, Any]:
         self.calls.append(

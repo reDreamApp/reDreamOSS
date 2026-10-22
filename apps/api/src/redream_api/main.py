@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from .api.router import router_internal, router_v1
+from .api.router import router_v1
 from .core.logging import configure_logging
 from .core.request_limits import RequestSizeLimitMiddleware
 
@@ -21,4 +21,3 @@ app = FastAPI(
 app.add_middleware(RequestSizeLimitMiddleware)
 
 app.include_router(router_v1, prefix="/api/v1")
-app.include_router(router_internal, prefix="/internal")

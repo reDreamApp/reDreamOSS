@@ -40,9 +40,7 @@ async def export_data(
                         "id": str(m.id),
                         "role": m.role,
                         "stage": m.stage,
-                        "content": m.content
-                        if m.visibility_status == "visible"
-                        else "[hidden]",
+                        "content": m.content,
                         "created_at": m.created_at.isoformat(),
                     }
                     for m in msgs

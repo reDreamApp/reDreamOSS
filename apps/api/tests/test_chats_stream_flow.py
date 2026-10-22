@@ -5,7 +5,8 @@ Exercises the backend frame contract:
     user_message -> safety_event -> [DONE]                  (high risk)
     user_message -> content* -> error -> [DONE]             (mid-stream failure,
                                                              user msg rolled back)
-Pre-stream failures (409 finished) arrive as plain HTTP errors.
+Pre-stream failures (409 finished, 502 crisis check) arrive as plain HTTP
+errors.
 
 The FakeAiClient's `queue_chat_stream` takes frames exactly as the real
 HttpxAiClient yields them: stripped `data: <payload>` strings.
@@ -100,7 +101,9 @@ async def test_stream_persists_and_echoes_nightmare_summary(client, fake_ai):
     assert second_call["payload"]["nightmare_summary"] == "Chased through a forest."
 
 
-async def test_stream_high_risk_short_circuits(client, fake_ai):
+async def test_stream_high_risk_short_circuits(client, fake_ai, db_session_maker):
+    from redream_api.db.repositories.chat_message_repo import ChatMessageRepo
+
     chat_id = await start_chat(client)
     fake_ai.queue_safety(
         {"risk": "high", "categories": ["self_harm"], "confidence": 0.93,
@@ -120,6 +123,9 @@ async def test_stream_high_risk_short_circuits(client, fake_ai):
     assert all(c["method"] != "chat_stream" for c in fake_ai.calls)
     chats = (await client.get("/api/v1/chats")).json()
     assert chats[0]["current_stage"] == "recording"
+    async with db_session_maker() as session:
+        msgs = await ChatMessageRepo(session).list_for_chat(chat_id)
+    assert len(msgs) == 1 and msgs[0].safety_flagged is True
 
 
 async def test_stream_error_frame_rolls_back_user_message(client, fake_ai):
@@ -187,6 +193,23 @@ async def test_stream_finished_chat_409_before_streaming(client, fake_ai):
     assert r.status_code == 409  # plain JSON error, not SSE
 
 
+async def test_stream_safety_failure_502_removes_user_message(client, fake_ai):
+    """Parity with /message: a failed crisis check is a pre-stream 502 and
+    the just-persisted user message is gone, so the retry starts clean."""
+    from redream_api.services.ai_client import AIServiceError
+
+    chat_id = await start_chat(client)
+    fake_ai.queue_safety_error(AIServiceError("/safety/classify failed: 503"))
+
+    r = await client.post(f"/api/v1/chats/{chat_id}/message/stream", json={"content": "hi"})
+    assert r.status_code == 502  # plain JSON error, not SSE
+    assert r.json()["detail"].startswith("safety: ")
+    assert all(c["method"] != "chat_stream" for c in fake_ai.calls)
+
+    msgs = (await client.get(f"/api/v1/chats/{chat_id}/messages")).json()
+    assert msgs == []
+
+
 # ---------------------------------------------------------------------------
 # Failure semantics (from the 2026-07-02 adversarial review): disconnects are
 # BaseExceptions the old `except Exception` never saw, post-finalize failures
@@ -241,9 +264,9 @@ async def test_disconnect_after_done_keeps_the_turn(db, fake_user, fake_ai):
     assert [m.role for m in msgs] == ["user", "assistant"]
 
 
-async def test_disconnect_on_safety_path_keeps_moderation_records(db, fake_user, fake_ai):
-    """ADR 0005: the flagged message + safety_events row must survive a
-    disconnect — the cancellation rollback must not touch the safety path."""
+async def test_disconnect_on_safety_path_keeps_flagged_message(db, fake_user, fake_ai):
+    """ADR 0005: the flagged message must survive a disconnect — the
+    cancellation rollback must not touch the safety path."""
     from redream_api.db.repositories.chat_message_repo import ChatMessageRepo
 
     fake_ai.queue_safety(
