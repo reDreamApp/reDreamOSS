@@ -22,6 +22,8 @@ class ChatState extends ChangeNotifier {
   static const offline = 'offline';
   static const streamInterrupted = 'stream interrupted';
   static const noChat = 'no_chat';
+  static const rateLimited = 'rate_limited';
+  static const voiceUnavailable = 'voice_unavailable';
 
   final IChatService _service;
 
@@ -38,6 +40,7 @@ class ChatState extends ChangeNotifier {
   SafetyEvent? _safetyEvent;
   int? _retryAfterSeconds;
   String? _errorMessage;
+  bool _voiceOff = false;
   bool _startFailed = false;
   bool _intensitySubmitted = false;
   bool _intensitySaving = false;
@@ -72,6 +75,8 @@ class ChatState extends ChangeNotifier {
   bool get awaitingReply => _sending && !_hasStreamingDraft;
   bool get isDone => _isDone;
   SafetyEvent? get safetyEvent => _safetyEvent;
+
+  /// Set while the daily-limit banner shows (the server's daily cap).
   int? get retryAfterSeconds => _retryAfterSeconds;
   String? get errorMessage => _errorMessage;
 
@@ -85,8 +90,9 @@ class ChatState extends ChangeNotifier {
   /// True while the rating save is in flight (disables the card's controls).
   bool get intensitySaving => _intensitySaving;
 
-  /// True when a recorder is wired — the composer shows the mic button.
-  bool get voiceInputAvailable => _recorder != null;
+  /// True when a recorder is wired and the server still takes voice — the
+  /// composer shows the mic button.
+  bool get voiceInputAvailable => _recorder != null && !_voiceOff;
 
   /// True while the mic is capturing audio.
   bool get recording => _recording;
@@ -149,7 +155,7 @@ class ChatState extends ChangeNotifier {
       _failedMessageId = null;
     } on ApiException catch (e) {
       _startFailed = true;
-      _errorMessage = e.message;
+      _errorMessage = _apiMessage(e);
     } on Exception catch (e) {
       _startFailed = true;
       _errorMessage = _describe(e);
@@ -257,7 +263,7 @@ class ChatState extends ChangeNotifier {
       _failedMessageId = null;
       return true;
     } on ApiException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = _apiMessage(e);
       return false;
     } on Exception catch (e) {
       _errorMessage = _describe(e);
@@ -308,27 +314,6 @@ class ChatState extends ChangeNotifier {
     }
     notifyListeners();
     return true;
-  }
-
-  /// Forgets every chat locally after the user's data was deleted
-  /// server-side; the session tab starts fresh on its next open.
-  void clear() {
-    _sessionEpoch++;
-    _sending = false;
-    _hasStreamingDraft = false;
-    _chatId = null;
-    _chats = const [];
-    _messages.clear();
-    _stage = IrtStage.recording;
-    _isDone = false;
-    _resumedDone = false;
-    _intensitySubmitted = false;
-    _intensitySaving = false;
-    _safetyEvent = null;
-    _retryAfterSeconds = null;
-    _errorMessage = null;
-    _failedMessageId = null;
-    notifyListeners();
   }
 
   void dismissSafetyEvent() {
@@ -383,10 +368,14 @@ class ChatState extends ChangeNotifier {
       );
       return text.trim().isEmpty ? null : text.trim();
     } on ApiException catch (e) {
-      if (e.isRateLimited) {
-        _retryAfterSeconds = e.retryAfterSeconds;
+      if (e.isDailyLimit) {
+        _retryAfterSeconds = e.retryAfterSeconds ?? 0;
+      } else if (e.isVoiceUnavailable) {
+        // The server's info was older than its settings: no mic from now on.
+        _voiceOff = true;
+        _errorMessage = voiceUnavailable;
       } else {
-        _errorMessage = e.message;
+        _errorMessage = _apiMessage(e);
       }
       return null;
     } on Exception catch (e) {
@@ -597,14 +586,14 @@ class ChatState extends ChangeNotifier {
         // The failure belongs to a session that is no longer on screen —
         // touching _messages / _failedMessageId / the 409 is-done state
         // would corrupt the WRONG chat. But session-INDEPENDENT feedback
-        // still surfaces: the token budget is per-user, so its banner is
-        // global (ADR 0008), and other failures still deserve an error
-        // banner. The 409 "chat is finished" case is purely session-scoped
-        // and stays skipped.
-        if (e.isRateLimited) {
-          _retryAfterSeconds = e.retryAfterSeconds;
+        // still surfaces: the daily limit is per user, so its banner is
+        // global, and other failures still deserve an error banner. The 409
+        // "chat is finished" case is purely session-scoped and stays
+        // skipped.
+        if (e.isDailyLimit) {
+          _retryAfterSeconds = e.retryAfterSeconds ?? 0;
         } else if (e.statusCode != 409) {
-          _errorMessage = e.message;
+          _errorMessage = _apiMessage(e);
         }
       } else {
         removeDraft();
@@ -615,12 +604,12 @@ class ChatState extends ChangeNotifier {
           _isDone = true;
           _resumedDone = true;
           _stage = IrtStage.finalStage;
-        } else if (e.isRateLimited) {
+        } else if (e.isDailyLimit) {
           _failedMessageId = userMessage.id;
-          _retryAfterSeconds = e.retryAfterSeconds;
+          _retryAfterSeconds = e.retryAfterSeconds ?? 0;
         } else {
           _failedMessageId = userMessage.id;
-          _errorMessage = e.message;
+          _errorMessage = _apiMessage(e);
         }
       }
     } on Exception catch (e) {
@@ -696,7 +685,7 @@ class ChatState extends ChangeNotifier {
       await _service.setDreamIntensity(chatId: id, value: value);
       saved = true;
     } on ApiException catch (e) {
-      if (_sessionEpoch == epoch) _errorMessage = e.message;
+      if (_sessionEpoch == epoch) _errorMessage = _apiMessage(e);
     } on Exception catch (e) {
       if (_sessionEpoch == epoch) _errorMessage = _describe(e);
     } finally {
@@ -708,27 +697,15 @@ class ChatState extends ChangeNotifier {
     }
   }
 
-  /// Flags a persisted message for moderation. Throws on failure so the
-  /// report dialog can show the error.
-  Future<void> report(
-    ChatMessage message, {
-    required ReportReason reason,
-    String? details,
-  }) async {
-    final id = _chatId;
-    if (id == null || message.isLocal) {
-      throw StateError('message not on server');
-    }
-    await _service.report(
-      chatId: id,
-      message: message,
-      reason: reason,
-      details: details,
-    );
-  }
-
   static String _describe(Exception e) =>
       e is NetworkException ? offline : e.toString();
+
+  /// The server's detail, or a marker the UI localizes.
+  static String _apiMessage(ApiException e) => e.isVoiceUnavailable
+      ? voiceUnavailable
+      : e.isRateLimited
+      ? rateLimited
+      : e.message;
 
   /// The greeting of one chat. It follows the chat's id, so a reload shows
   /// the same one and new chats cycle through the variants.

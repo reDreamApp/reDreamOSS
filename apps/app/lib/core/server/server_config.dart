@@ -131,6 +131,10 @@ class ServerConfig extends ChangeNotifier {
       return;
     }
     if (_baseUrl != url || info.apiVersion != appApiVersion) return;
+    // Resumes are frequent (permission dialogs, the notification shade):
+    // nothing is rebuilt when nothing changed.
+    final json = jsonEncode(info.toJson());
+    if (json == jsonEncode(_instance?.toJson())) return;
     await _store.setJson(_infoKey, info.toJson());
     if (_baseUrl != url) return;
     _instance = info;

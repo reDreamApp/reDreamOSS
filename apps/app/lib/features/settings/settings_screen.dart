@@ -14,15 +14,13 @@ import 'package:redream_app/core/widgets/icon_row.dart';
 import 'package:redream_app/core/widgets/theme_mode_toggle.dart';
 import 'package:redream_app/features/consent/consent_state.dart';
 import 'package:redream_app/features/reminders/reminder_tile.dart';
+import 'package:redream_app/features/server/operator_links.dart';
 import 'package:redream_app/features/server/server_gate.dart';
 import 'package:redream_app/features/settings/change_email_screen.dart';
 import 'package:redream_app/features/settings/change_password_screen.dart';
 import 'package:redream_app/features/settings/contact_support_screen.dart';
 import 'package:redream_app/features/settings/delete_account_screen.dart';
-import 'package:redream_app/features/settings/delete_data_screen.dart';
 import 'package:redream_app/features/settings/export_data_screen.dart';
-import 'package:redream_app/features/settings/help_center_screen.dart';
-import 'package:redream_app/features/settings/privacy_policy_screen.dart';
 import 'package:redream_app/features/settings/profile.dart';
 import 'package:redream_app/features/settings/profile_labels.dart';
 import 'package:redream_app/features/settings/profile_state.dart';
@@ -122,6 +120,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final auth = context.watch<AuthService>();
     final settings = context.watch<AppSettings>();
     final profile = context.watch<ProfileState>();
+    final instance = context.watch<ServerConfig>().instance;
+    final contact = instance?.operatorContact;
+    final privacy = webUri(instance?.privacyUrl ?? '');
 
     final frequency = profile.profile.nightmareFrequency;
     final frequencyText = profile.loading && !profile.loaded
@@ -252,13 +253,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: () => _push(const ExportDataScreen()),
                 ),
                 IconRow(
-                  icon: Icons.delete_sweep_outlined,
-                  color: red,
-                  title: l10n.settingsDeleteData,
-                  trailing: const RowChevron(),
-                  onTap: () => _push(const DeleteDataScreen()),
-                ),
-                IconRow(
                   icon: Icons.gpp_maybe_outlined,
                   color: red,
                   title: l10n.settingsWithdrawConsent,
@@ -279,36 +273,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            _Section(
-              icon: Icons.help_center_outlined,
-              title: l10n.settingsSupportSection,
-              color: green,
-              children: [
-                IconRow(
-                  icon: Icons.menu_book_outlined,
-                  color: green,
-                  title: l10n.settingsHelpCenter,
-                  trailing: const RowChevron(),
-                  onTap: () => _push(const HelpCenterScreen()),
-                ),
-                IconRow(
-                  icon: Icons.support_agent_outlined,
-                  color: green,
-                  title: l10n.settingsContact,
-                  trailing: const RowChevron(),
-                  onTap: () => _push(const ContactSupportScreen()),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: OutlinedButton.icon(
-                    onPressed: () => _push(const PrivacyPolicyScreen()),
-                    icon: const Icon(Icons.policy_outlined),
-                    label: Text(l10n.settingsPrivacyPolicy),
-                  ),
-                ),
-              ],
-            ),
+            if (contact != null || privacy != null) ...[
+              const SizedBox(height: 16),
+              // Whoever runs this server, as its /instance names them.
+              _Section(
+                icon: Icons.help_center_outlined,
+                title: l10n.settingsSupportSection,
+                color: green,
+                children: [
+                  if (contact != null)
+                    IconRow(
+                      icon: Icons.support_agent_outlined,
+                      color: green,
+                      title: l10n.settingsContact,
+                      subtitle: contact,
+                      trailing: const RowChevron(),
+                      onTap: () => _push(const ContactSupportScreen()),
+                    ),
+                  if (privacy != null)
+                    IconRow(
+                      icon: Icons.policy_outlined,
+                      color: green,
+                      title: l10n.settingsPrivacyPolicy,
+                      trailing: const Icon(Icons.open_in_new),
+                      onTap: () => openOperatorLink(context, privacy),
+                    ),
+                ],
+              ),
+            ],
             const SizedBox(height: 24),
             Text(
               l10n.appTitle,

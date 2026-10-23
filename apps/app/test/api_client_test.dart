@@ -31,7 +31,7 @@ void main() {
           'POST /api/v1/limited',
           (_, _) => throw FakeApiError(
             429,
-            'budget exceeded',
+            'daily limit reached',
             headers: {'retry-after': '120'},
           ),
         );
@@ -40,7 +40,7 @@ void main() {
         fail('expected ApiException');
       } on ApiException catch (e) {
         expect(e.isRateLimited, isTrue);
-        expect(e.message, 'budget exceeded');
+        expect(e.message, 'daily limit reached');
         expect(e.retryAfterSeconds, 120);
       }
     },

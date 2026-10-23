@@ -30,6 +30,21 @@ void main() {
         }
       });
 
+      test('the daily limit, a throttle and voice off read differently', () {
+        expect(
+          describeError(ApiException(429, 'daily limit reached'), l10n),
+          l10n.dailyLimitBody,
+        );
+        expect(
+          describeError(ApiException(429, 'slow down'), l10n),
+          l10n.errorRateLimited,
+        );
+        expect(
+          describeError(ApiException(503, 'voice_unavailable'), l10n),
+          l10n.voiceUnavailable,
+        );
+      });
+
       test('the wait is rounded up to whole minutes', () {
         String wait(int? seconds) => describeError(
           AuthFailure(

@@ -8,6 +8,8 @@ String describeError(Object error, AppLocalizations l10n) => switch (error) {
   NetworkException() => l10n.errorOffline,
   AuthFailure() => _authMessage(error, l10n),
   ServerFailure(:final kind) => _serverMessage(kind, l10n),
+  ApiException(isDailyLimit: true) => l10n.dailyLimitBody,
+  ApiException(isVoiceUnavailable: true) => l10n.voiceUnavailable,
   ApiException(isRateLimited: true) => l10n.errorRateLimited,
   // The 401 hook has already ended the session.
   ApiException(isUnauthorized: true) => l10n.authSessionExpired,

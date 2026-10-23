@@ -30,12 +30,6 @@ class DreamStore {
   Future<void> writePendingPractices(List<int> dreamIds) =>
       _store.setJson(_practicesKey, dreamIds);
 
-  Future<void> clear() async {
-    await _store.remove(_cacheKey);
-    await _store.remove(_draftsKey);
-    await _store.remove(_practicesKey);
-  }
-
   List<T> _readList<T>(String key, T Function(Map<String, dynamic>) parse) => [
     if (_store.getJson(key) case final List<dynamic> list)
       for (final e in list)

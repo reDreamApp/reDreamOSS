@@ -43,11 +43,4 @@ class ProgressState extends ChangeNotifier {
     await _service.setTodayMood(mood);
     await refresh();
   }
-
-  void resetForUser() {
-    _stats = null;
-    _loaded = false;
-    _error = null;
-    notifyListeners();
-  }
 }

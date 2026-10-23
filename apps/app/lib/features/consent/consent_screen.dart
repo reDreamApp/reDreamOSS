@@ -3,13 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
 import 'package:redream_app/core/widgets/app_button.dart';
 import 'package:redream_app/core/widgets/app_card.dart';
 import 'package:redream_app/core/widgets/brand_logo.dart';
 import 'package:redream_app/core/widgets/feedback.dart';
 import 'package:redream_app/features/consent/consent_state.dart';
-import 'package:redream_app/features/settings/privacy_policy_screen.dart';
+import 'package:redream_app/features/server/operator_links.dart';
 import 'package:redream_app/l10n/generated/app_localizations.dart';
 
 /// Blocks the signed-in app until Art. 9 consent is granted for the current
@@ -92,6 +93,9 @@ class _ConsentScreenState extends State<ConsentScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final privacy = webUri(
+      context.watch<ServerConfig>().instance?.privacyUrl ?? '',
+    );
     final consent = context.watch<ConsentState>();
     final brand = BrandTheme.of(context);
     final notice = consent.hasCurrentText
@@ -141,17 +145,14 @@ class _ConsentScreenState extends State<ConsentScreen> {
                       ],
                     ),
                   ),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const PrivacyPolicyScreen(),
-                        ),
+                  if (privacy != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        onPressed: () => openOperatorLink(context, privacy),
+                        child: Text(l10n.settingsPrivacyPolicy),
                       ),
-                      child: Text(l10n.settingsPrivacyPolicy),
                     ),
-                  ),
                 ],
               ),
             ),

@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
 import 'package:redream_app/core/utils/errors.dart';
 import 'package:redream_app/core/widgets/app_button.dart';
 import 'package:redream_app/core/widgets/app_card.dart';
 import 'package:redream_app/core/widgets/feedback.dart';
 import 'package:redream_app/features/chat/chat_actions.dart';
+import 'package:redream_app/features/chat/chat_errors.dart';
 import 'package:redream_app/features/chat/chat_state.dart';
 import 'package:redream_app/features/journal/dream.dart';
 import 'package:redream_app/features/journal/dream_card.dart';
@@ -141,9 +143,7 @@ class _DreamDetailScreenState extends State<DreamDetailScreen> {
         final message = chat.errorMessage;
         showAppSnackBar(
           context,
-          message == ChatState.offline
-              ? l10n.errorOffline
-              : (message ?? l10n.errorUnknown),
+          message == null ? l10n.errorUnknown : chatErrorText(message, l10n),
           error: true,
         );
         return;
@@ -163,6 +163,13 @@ class _DreamDetailScreenState extends State<DreamDetailScreen> {
     final dream =
         context.watch<JournalState>().byId(widget.dream.id) ?? widget.dream;
     final twoSided = dream.isNightmare && dream.hasRewrite;
+    // Audio made before the server turned speech off still plays.
+    final rehearsalAudio = context.select<ServerConfig, bool>(
+      (s) => s.instance?.rehearsalAudio ?? false,
+    );
+    final canListen =
+        dream.canPractice &&
+        (rehearsalAudio || (dream.rehearsalAudioUrl ?? '').isNotEmpty);
     final pages = twoSided
         ? [
             (l10n.detailRewritten, dream.rewrittenDream!),
@@ -268,7 +275,7 @@ class _DreamDetailScreenState extends State<DreamDetailScreen> {
                       _readSeconds / rehearsalSeconds(dream.rewrittenDream!),
                 ),
               ],
-              if (dream.canPractice || dream.chatId != null) ...[
+              if (canListen || dream.chatId != null) ...[
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -282,9 +289,9 @@ class _DreamDetailScreenState extends State<DreamDetailScreen> {
                           onPressed: () => _openChatHistory(dream),
                         ),
                       ),
-                    if (dream.chatId != null && dream.canPractice)
+                    if (dream.chatId != null && canListen)
                       const SizedBox(width: 12),
-                    if (dream.canPractice)
+                    if (canListen)
                       Expanded(
                         child: AppButton(
                           label: l10n.detailListen,

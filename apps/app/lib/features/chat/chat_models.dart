@@ -45,9 +45,6 @@ class ChatMessage {
   final DateTime createdAt;
 
   bool get isUser => role == 'user';
-
-  /// Client-side only (welcome text, unsent input): never reportable.
-  bool get isLocal => id.startsWith('local-');
 }
 
 /// One row of `GET /api/v1/chats` (backend `ChatOut`) — used by the
@@ -281,21 +278,4 @@ class ChatTurn {
   final IrtStage stage;
   final bool isDone;
   final SafetyEvent? safetyEvent;
-}
-
-/// Reasons offered when reporting an AI reply (`POST /reports/ai-content`).
-enum ReportReason {
-  childSafety('child_safety'),
-  selfHarm('self_harm'),
-  sexual('sexual'),
-  hate('hate'),
-  violence('violence'),
-  harassment('harassment'),
-  deceptive('deceptive'),
-  other('other')
-  ;
-
-  const ReportReason(this.wire);
-
-  final String wire;
 }

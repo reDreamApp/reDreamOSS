@@ -467,6 +467,156 @@ void main() {
     });
   });
 
+  group('what the server offers', () {
+    testWidgets('no voice: no mic in the session, no Listen on a dream', (
+      tester,
+    ) async {
+      final (app, _, _) = await _app(
+        auth: FakeAuth(userId: 'user-1'),
+        recorder: _FakeRecorder(),
+        instance: instanceJson(voice: false),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.text('Session'));
+      await _settle(tester);
+      expect(find.byKey(const ValueKey('mic')), findsNothing);
+
+      await tester.tap(find.text('Journal'));
+      await _settle(tester);
+      await tester.tap(find.text('Lost in Dark Forest'));
+      await _settle(tester);
+      expect(find.text(_en.detailListen), findsNothing);
+    });
+
+    testWidgets('speech turned on while the app runs brings the mic', (
+      tester,
+    ) async {
+      final (app, api, _) = await _app(
+        auth: FakeAuth(userId: 'user-1'),
+        recorder: _FakeRecorder(),
+        instance: instanceJson(voice: false),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+      await tester.tap(find.text('Session'));
+      await _settle(tester);
+      expect(find.byKey(const ValueKey('mic')), findsNothing);
+
+      api.on('GET /api/v1/instance', (_, _) => instanceJson());
+      await tester
+          .element(find.byType(MaterialApp))
+          .read<ServerConfig>()
+          .refresh();
+      await _settle(tester);
+
+      expect(find.byKey(const ValueKey('mic')), findsOneWidget);
+    });
+
+    testWidgets('without speech, audio a dream already has stays', (
+      tester,
+    ) async {
+      final (app, api, _) = await _app(
+        auth: FakeAuth(userId: 'user-1'),
+        instance: instanceJson(voice: false),
+      );
+      api.on(
+        'GET /api/v1/dreams',
+        (_, _) => [
+          {
+            ...dreamJson(1, current: true),
+            'rehearsal_audio_url': '/api/v1/audio/files/en-1.mp3?exp=1&sig=a',
+            'rehearsal_language': 'en',
+          },
+        ],
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.text('Journal'));
+      await _settle(tester);
+      await tester.tap(find.text('Lost in Dark Forest'));
+      await _settle(tester);
+      expect(find.text(_en.detailListen), findsOneWidget);
+    });
+
+    testWidgets('with voice the dream offers Listen', (tester) async {
+      final (app, _, _) = await _app(auth: FakeAuth(userId: 'user-1'));
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.text('Journal'));
+      await _settle(tester);
+      await tester.tap(find.text('Lost in Dark Forest'));
+      await _settle(tester);
+      expect(find.text(_en.detailListen), findsOneWidget);
+    });
+
+    testWidgets('settings name no contact or policy the server lacks', (
+      tester,
+    ) async {
+      final (app, _, _) = await _app(auth: FakeAuth(userId: 'user-1'));
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await _settle(tester);
+
+      expect(find.text(_en.settingsSupportSection), findsNothing);
+      expect(find.text(_en.settingsContact), findsNothing);
+      expect(find.text(_en.settingsPrivacyPolicy), findsNothing);
+      expect(find.textContaining('redreamai.com'), findsNothing);
+    });
+
+    testWidgets("settings lead to the operator's contact and policy", (
+      tester,
+    ) async {
+      final (app, _, _) = await _app(
+        auth: FakeAuth(userId: 'user-1'),
+        instance: instanceJson(
+          operatorName: 'Dream Club',
+          contact: 'help@dreams.example.org',
+          privacyUrl: 'https://dreams.example.org/privacy',
+        ),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await _settle(tester);
+      expect(find.text(_en.settingsPrivacyPolicy), findsOneWidget);
+      expect(find.text('help@dreams.example.org'), findsOneWidget);
+      await tester.tap(find.text(_en.settingsContact));
+      await _settle(tester);
+
+      expect(find.text('Run by Dream Club'), findsOneWidget);
+      expect(find.text(_en.contactOpenEmail), findsOneWidget);
+      expect(find.text(_en.contactCopy), findsOneWidget);
+    });
+
+    testWidgets('forgot password shows whom to ask', (tester) async {
+      final (app, _, _) = await _app(
+        auth: FakeAuth(),
+        instance: instanceJson(contact: 'https://dreams.example.org/help'),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.text('Forgot password?'));
+      await _settle(tester);
+
+      expect(find.text('https://dreams.example.org/help'), findsOneWidget);
+    });
+  });
+
   testWidgets('forgot password says who can reset it', (tester) async {
     final (app, api, _) = await _app(auth: FakeAuth());
     _tallPhone(tester);

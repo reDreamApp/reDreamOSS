@@ -35,14 +35,6 @@ abstract class IChatService {
   });
 
   Future<void> deleteChat(int chatId);
-
-  /// Flags an AI reply for moderation (`POST /reports/ai-content`).
-  Future<void> report({
-    required int chatId,
-    required ChatMessage message,
-    required ReportReason reason,
-    String? details,
-  });
 }
 
 class ChatService implements IChatService {
@@ -94,20 +86,6 @@ class ChatService implements IChatService {
 
   @override
   Future<void> deleteChat(int chatId) => _api.delete('/api/v1/chats/$chatId');
-
-  @override
-  Future<void> report({
-    required int chatId,
-    required ChatMessage message,
-    required ReportReason reason,
-    String? details,
-  }) => _api.post('/api/v1/reports/ai-content', {
-    'chat_id': chatId,
-    'message_id': message.id,
-    'target_role': message.isUser ? 'user' : 'assistant',
-    'reason': reason.wire,
-    if (details != null && details.trim().isNotEmpty) 'details': details.trim(),
-  });
 
   @override
   Future<ChatTurn> sendMessage({

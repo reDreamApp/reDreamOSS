@@ -220,6 +220,20 @@ void main() {
       expect(server.instance!.registration, 'open');
     });
 
+    test('an unchanged answer rebuilds nothing', () async {
+      final server = config();
+      await server.connect('http://fake');
+      var notified = 0;
+      server.addListener(() => notified++);
+
+      await server.refresh();
+      expect(notified, 0);
+
+      api.on('GET /api/v1/instance', (_, _) => instanceJson(voice: false));
+      await server.refresh();
+      expect(notified, 1);
+    });
+
     test(
       'keeps the last answer when the server moved to another API',
       () async {

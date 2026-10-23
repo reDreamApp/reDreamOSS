@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/features/auth/auth_fields.dart';
+import 'package:redream_app/features/server/operator_links.dart';
 import 'package:redream_app/l10n/generated/app_localizations.dart';
 
 /// There is no reset mail: whoever runs the server resets passwords.
@@ -9,6 +12,8 @@ class ForgotPasswordScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final contact = context.watch<ServerConfig>().instance?.operatorContact;
+    final link = contact == null ? null : contactUri(contact);
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -26,6 +31,17 @@ class ForgotPasswordScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(l10n.forgotPasswordBody, textAlign: TextAlign.center),
+              if (contact != null) ...[
+                const SizedBox(height: 12),
+                if (link != null)
+                  TextButton.icon(
+                    onPressed: () => openOperatorLink(context, link),
+                    icon: const Icon(Icons.support_agent_outlined),
+                    label: Text(contact),
+                  )
+                else
+                  SelectableText(contact, textAlign: TextAlign.center),
+              ],
               const SizedBox(height: 16),
               TextButton(
                 onPressed: () => Navigator.of(context).maybePop(),

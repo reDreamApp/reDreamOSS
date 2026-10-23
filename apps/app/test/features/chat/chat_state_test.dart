@@ -78,15 +78,6 @@ class _FakeChatService implements IChatService {
   final List<int> deletedIds = [];
   int listChatsCalls = 0;
   int listMessagesCalls = 0;
-  final List<(int, String, ReportReason)> reports = [];
-
-  @override
-  Future<void> report({
-    required int chatId,
-    required ChatMessage message,
-    required ReportReason reason,
-    String? details,
-  }) async => reports.add((chatId, message.id, reason));
 
   @override
   Future<ChatStart> start({required String language}) async {
@@ -353,7 +344,7 @@ void main() {
       await state.loadChat(5, welcomeMessages: ['Welcome!']);
       final welcome = state.messages.first;
       expect(welcome.content, 'Welcome!');
-      expect(welcome.isLocal, isTrue);
+      expect(welcome.id, startsWith('local-'));
       // Dated like the first stored message, not like the moment of loading.
       expect(welcome.createdAt, state.messages[1].createdAt);
       expect(state.messages, hasLength(3));
@@ -484,14 +475,29 @@ void main() {
       expect(state.errorMessage, 'boom');
     });
 
-    test('sets retryAfterSeconds (not errorMessage) on 429', () async {
+    test('the daily limit sets retryAfterSeconds (not errorMessage)', () async {
       await start();
       service
         ..failSend = true
-        ..sendError = ApiException(429, 'limit', retryAfterSeconds: 30);
+        ..sendError = ApiException(
+          429,
+          'daily limit reached',
+          retryAfterSeconds: 30,
+        );
       await state.send('my dream');
       expect(state.retryAfterSeconds, 30);
       expect(state.errorMessage, isNull);
+      expect(state.failedMessageId, isNotNull);
+    });
+
+    test('another 429 is a short throttle, not the daily banner', () async {
+      await start();
+      service
+        ..failSend = true
+        ..sendError = ApiException(429, 'slow down', retryAfterSeconds: 5);
+      await state.send('my dream');
+      expect(state.retryAfterSeconds, isNull);
+      expect(state.errorMessage, ChatState.rateLimited);
       expect(state.failedMessageId, isNotNull);
     });
 
@@ -1195,26 +1201,31 @@ void main() {
     });
 
     test(
-      'stale pre-stream 429 still raises the global budget banner',
+      'stale pre-stream daily limit still raises the global banner',
       () async {
         await start();
         service.messagesByChat[2] = [];
         final controller = StreamController<ChatStreamEvent>();
         service.scriptedStream = controller.stream;
-        final sendFuture = state.send('over budget');
+        final sendFuture = state.send('over the limit');
         await pumpEventQueue();
 
         await state.loadChat(2);
-        controller.addError(ApiException(429, 'limit', retryAfterSeconds: 30));
+        controller.addError(
+          ApiException(429, 'daily limit reached', retryAfterSeconds: 30),
+        );
         await controller.close();
         await sendFuture;
 
-        // The token budget is per-user, not per-chat — the banner shows even
+        // The daily limit is per user, not per chat — the banner shows even
         // though the triggering chat left the screen.
         expect(state.retryAfterSeconds, 30);
         // Session-scoped effects stay off the new chat.
         expect(state.failedMessageId, isNull);
-        expect(state.messages.any((m) => m.content == 'over budget'), isFalse);
+        expect(
+          state.messages.any((m) => m.content == 'over the limit'),
+          isFalse,
+        );
       },
     );
 
@@ -1323,12 +1334,12 @@ void main() {
       expect(state.micPermissionDenied, isFalse);
     });
 
-    test('429 during transcription surfaces the budget banner', () async {
+    test('the daily limit during transcription shows its banner', () async {
       final service = _FakeChatService()
         ..failTranscribe = true
         ..transcribeError = ApiException(
           429,
-          'budget',
+          'daily limit reached',
           retryAfterSeconds: 60,
         );
       final recorder = _FakeVoiceRecorder();
@@ -1341,6 +1352,24 @@ void main() {
       expect(state.retryAfterSeconds, 60);
       expect(state.transcribing, isFalse);
     });
+
+    test(
+      'voice switched off on the server hides the mic from then on',
+      () async {
+        final service = _FakeChatService()
+          ..failTranscribe = true
+          ..transcribeError = ApiException(503, 'voice_unavailable');
+        final state = ChatState(service, voiceRecorder: _FakeVoiceRecorder());
+        expect(state.voiceInputAvailable, isTrue);
+
+        await state.startRecording();
+        final transcript = await state.stopRecording();
+
+        expect(transcript, isNull);
+        expect(state.errorMessage, ChatState.voiceUnavailable);
+        expect(state.voiceInputAvailable, isFalse);
+      },
+    );
 
     test('transcription failure sets errorMessage, returns null', () async {
       final service = _FakeChatService()..failTranscribe = true;
@@ -1404,35 +1433,6 @@ void main() {
   });
 
   group('ported additions', () {
-    test('report sends persisted messages and refuses local ones', () async {
-      final service = _FakeChatService();
-      final state = ChatState(service);
-      await state.startChat(language: 'en', welcomeMessages: ['hi']);
-      await state.send('my dream');
-      final reply = state.messages.last;
-      await state.report(reply, reason: ReportReason.violence);
-      expect(service.reports.single.$2, reply.id);
-      expect(service.reports.single.$3, ReportReason.violence);
-      final welcome = state.messages.first;
-      expect(welcome.isLocal, isTrue);
-      expect(
-        () => state.report(welcome, reason: ReportReason.other),
-        throwsStateError,
-      );
-    });
-
-    test('clear forgets the session and the chat list', () async {
-      final service = _FakeChatService()..chatList = [_chat(1)];
-      final state = ChatState(service);
-      await state.loadChats();
-      await state.startChat(language: 'en', welcomeMessages: ['hi']);
-      state.clear();
-      expect(state.chatId, isNull);
-      expect(state.messages, isEmpty);
-      expect(state.chats, isEmpty);
-      expect(state.stage, IrtStage.recording);
-    });
-
     test('transport failures surface as the offline marker', () async {
       final service = _FakeChatService()
         ..scriptedStream = Stream.error(NetworkException('no route'));

@@ -47,11 +47,4 @@ class ProfileState extends ChangeNotifier {
     _profile = await _service.updateNightmareFrequency(value);
     notifyListeners();
   }
-
-  void resetForUser() {
-    _profile = Profile.empty;
-    _loaded = false;
-    _error = null;
-    notifyListeners();
-  }
 }

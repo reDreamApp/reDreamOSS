@@ -1,10 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
-import 'package:redream_app/core/utils/errors.dart';
 import 'package:redream_app/core/utils/formatting.dart';
 import 'package:redream_app/core/widgets/assistant_sheep.dart';
 import 'package:redream_app/core/widgets/feedback.dart';
@@ -84,7 +81,6 @@ class MessageBubble extends StatelessWidget {
 
   Future<void> _showActions(BuildContext context) async {
     final l10n = AppLocalizations.of(context)!;
-    final state = context.read<ChatState>();
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -100,24 +96,6 @@ class MessageBubble extends StatelessWidget {
                 if (!sheet.mounted) return;
                 Navigator.pop(sheet);
                 if (context.mounted) showAppSnackBar(context, l10n.chatCopied);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.flag_outlined),
-              title: Text(l10n.chatReport),
-              onTap: () {
-                Navigator.pop(sheet);
-                if (message.isLocal || state.chatId == null) {
-                  showAppSnackBar(context, l10n.chatReportNotReady);
-                  return;
-                }
-                unawaited(
-                  showDialog<void>(
-                    context: context,
-                    builder: (_) =>
-                        _ReportDialog(message: message, state: state),
-                  ),
-                );
               },
             ),
           ],
@@ -164,107 +142,6 @@ class _UserAvatar extends StatelessWidget {
         size: 20,
         color: brand.onInverseSurface,
       ),
-    );
-  }
-}
-
-class _ReportDialog extends StatefulWidget {
-  const _ReportDialog({required this.message, required this.state});
-
-  final ChatMessage message;
-  final ChatState state;
-
-  @override
-  State<_ReportDialog> createState() => _ReportDialogState();
-}
-
-class _ReportDialogState extends State<_ReportDialog> {
-  ReportReason _reason = ReportReason.other;
-  final _details = TextEditingController();
-  bool _busy = false;
-
-  @override
-  void dispose() {
-    _details.dispose();
-    super.dispose();
-  }
-
-  String _label(ReportReason r, AppLocalizations l10n) => switch (r) {
-    ReportReason.childSafety => l10n.reasonChildSafety,
-    ReportReason.selfHarm => l10n.reasonSelfHarm,
-    ReportReason.sexual => l10n.reasonSexual,
-    ReportReason.hate => l10n.reasonHate,
-    ReportReason.violence => l10n.reasonViolence,
-    ReportReason.harassment => l10n.reasonHarassment,
-    ReportReason.deceptive => l10n.reasonDeceptive,
-    ReportReason.other => l10n.reasonOther,
-  };
-
-  Future<void> _submit() async {
-    final l10n = AppLocalizations.of(context)!;
-    setState(() => _busy = true);
-    try {
-      await widget.state.report(
-        widget.message,
-        reason: _reason,
-        details: _details.text,
-      );
-      if (!mounted) return;
-      Navigator.pop(context);
-      showAppSnackBar(context, l10n.chatReportThanks);
-    } on Exception catch (e) {
-      if (!mounted) return;
-      setState(() => _busy = false);
-      showAppSnackBar(
-        context,
-        l10n.chatReportFailed(describeError(e, l10n)),
-        error: true,
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(l10n.chatReportTitle),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DropdownButtonFormField<ReportReason>(
-            initialValue: _reason,
-            decoration: InputDecoration(labelText: l10n.chatReportReason),
-            items: [
-              for (final r in ReportReason.values)
-                DropdownMenuItem(value: r, child: Text(_label(r, l10n))),
-            ],
-            onChanged: _busy ? null : (r) => setState(() => _reason = r!),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _details,
-            maxLines: 3,
-            enabled: !_busy,
-            decoration: InputDecoration(labelText: l10n.chatReportDetails),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: _busy ? null : () => Navigator.pop(context),
-          child: Text(l10n.cancel),
-        ),
-        TextButton(
-          onPressed: _busy ? null : _submit,
-          child: _busy
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Text(l10n.submit),
-        ),
-      ],
     );
   }
 }

@@ -26,7 +26,12 @@ builds accept `https://` only. A local server is `http://localhost:8001`
 the `http://`, since an address without a scheme is taken as `https://`. An
 operator's own build can preset the address, which is then tried without
 asking: `fvm flutter build apk --dart-define=DEFAULT_SERVER_URL=https://dreams.example.org`.
-"Change server" (sign-in screen, settings) signs out first. Sign-in is the server's own
+"Change server" (sign-in screen, settings) signs out first. What the server offers
+(`/instance`, asked again when the app comes back to the foreground) drives
+the UI: no mic and no Listen without speech on the server (audio a dream
+already has still plays), no sign-up on a closed server, and the contact
+and privacy policy in settings are the operator's own (hidden when the
+server names none). Sign-in is the server's own
 email/password login: it returns an opaque bearer token, kept in the secure
 storage together with the server it belongs to. The server slides the token
 on use, so the app never expires it itself; a 401 signs out. Test users come
@@ -52,11 +57,11 @@ lib/
   features/            one folder per feature: models, service (HTTP), state (ChangeNotifier), screens
     shell/             MainShell (app bar, 4 tabs, chat drawer), UserScope (per-user providers + nested navigator)
     home/              home tab, progress stats + mood, IRT guide
-    chat/              Session tab: streamed replies (SSE), voice input, rating card after a session, history drawer, reports
+    chat/              Session tab: streamed replies (SSE), voice input, rating card after a session, history drawer
     consent/           Art. 9 consent gate + screen; withdrawal lives in settings
     journal/           dreams: offline-capable JournalState, cards, detail, editor, practice (reading/audio)
     reminders/         daily local notification + settings tile
-    settings/          profile, account (email/password/export/delete), help center, privacy policy
+    settings/          profile, account (email/password/export/delete account), server, the operator's contact and privacy link
     auth/              sign in / sign up (invite code) / forgot password note
     server/            ServerGate + address screen, changeServer()
     onboarding/        post-sign-up intro + profile questions
@@ -74,8 +79,9 @@ Rules of thumb:
   the per-user providers. Dialogs use the root navigator: pass state in.
 - Chat stages are `recording → rewriting → summary → final`. The chat never
   asks for the 0–10 rating; the finished panel does (`PUT /chats/{id}/intensity`).
-- Voice input records WAV (16 kHz mono) and puts the transcript into the input
-  field for review; it is never sent automatically.
+- Voice input records WAV (16 kHz mono); when the recording stops, the
+  transcript is sent as a message together with anything already typed (if
+  another chat was opened meanwhile, it stays in the input field instead).
 - Offline: the journal caches the last server list and queues drafts and
   practices in `LocalStore`; `JournalState.syncPending()` flushes them on the
   next refresh or app resume. Chat keeps the last failed message for resend.

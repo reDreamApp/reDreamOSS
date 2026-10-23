@@ -203,7 +203,7 @@ void main() {
       () async {
         final client = MockClient.streaming(
           (request, bodyStream) async => http.StreamedResponse(
-            Stream.value(utf8.encode('{"detail": "budget exceeded"}')),
+            Stream.value(utf8.encode('{"detail": "daily limit reached"}')),
             429,
             headers: {'retry-after': '42'},
           ),
@@ -216,7 +216,7 @@ void main() {
             isA<ApiException>()
                 .having((e) => e.statusCode, 'statusCode', 429)
                 .having((e) => e.retryAfterSeconds, 'retryAfterSeconds', 42)
-                .having((e) => e.message, 'message', 'budget exceeded'),
+                .having((e) => e.message, 'message', 'daily limit reached'),
           ),
         );
       },

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
+import 'package:redream_app/core/api/api_exception.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
 import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/storage/secure_audio_cache.dart';
@@ -109,10 +110,28 @@ class _PracticeAudioScreenState extends State<PracticeAudioScreen> {
         _dream = await journal.reload(_dream.id);
       }
       if (!_hasAudio && mounted) {
-        _dream = await journal.generateRehearsal(_dream, language: _language);
+        try {
+          _dream = await journal.generateRehearsal(
+            _dream,
+            language: _language,
+          );
+        } on ApiException catch (e) {
+          // Speech is off on the server: the audio the dream already has
+          // (in its other language) still plays.
+          if (!e.isVoiceUnavailable ||
+              (_dream.rehearsalAudioUrl ?? '').isEmpty) {
+            rethrow;
+          }
+        }
       }
       if ((_dream.rehearsalAudioUrl ?? '').isNotEmpty) {
-        _dream = await journal.refreshRehearsal(_dream.id);
+        try {
+          _dream = await journal.refreshRehearsal(_dream.id);
+        } on ApiException catch (e) {
+          // The file is gone on the server.
+          if (e.isNotFound) throw _UserError(l10n.audioUnavailable);
+          rethrow;
+        }
       }
       final url = _dream.rehearsalAudioUrl ?? '';
       if (url.isEmpty) throw _UserError(l10n.audioUnavailable);

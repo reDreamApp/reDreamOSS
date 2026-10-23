@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,15 +8,38 @@ import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/features/server/server_address_screen.dart';
 
 /// No server yet → the address screen. Otherwise [child] (the auth gate).
-class ServerGate extends StatelessWidget {
+/// Coming back to the app asks the server about itself again, so features
+/// it turned on or off show without a restart.
+class ServerGate extends StatefulWidget {
   const ServerGate({required this.child, super.key});
 
   final Widget child;
 
   @override
+  State<ServerGate> createState() => _ServerGateState();
+}
+
+class _ServerGateState extends State<ServerGate> {
+  late final AppLifecycleListener _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(
+      onResume: () => unawaited(context.read<ServerConfig>().refresh()),
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final connected = context.select<ServerConfig, bool>((s) => s.isConnected);
-    return connected ? child : const ServerAddressScreen();
+    return connected ? widget.child : const ServerAddressScreen();
   }
 }
 

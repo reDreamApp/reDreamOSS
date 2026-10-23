@@ -323,17 +323,6 @@ class JournalState extends ChangeNotifier {
     }
   }
 
-  Future<void> resetForUser() async {
-    _dreams = [];
-    _drafts = [];
-    _pendingPractices = [];
-    _loaded = false;
-    _usedCache = false;
-    _error = null;
-    await _store.clear();
-    notifyListeners();
-  }
-
   Future<void> _ensureFocus() async {
     final candidates = _dreams.where((d) => d.isNightmare && d.hasRewrite);
     if (candidates.isEmpty || candidates.any((d) => d.isCurrentDream)) return;

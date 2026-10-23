@@ -133,6 +133,9 @@ Map<String, Object?> instanceJson({
   String registration = 'invite',
   String? name,
   bool voice = true,
+  String? operatorName,
+  String? contact,
+  String? privacyUrl,
 }) => {
   'name': name,
   'api_version': apiVersion,
@@ -144,7 +147,11 @@ Map<String, Object?> instanceJson({
     'transcription': voice,
     'rehearsal_audio': voice,
   },
-  'operator': {'name': null, 'contact': null, 'privacy_url': null},
+  'operator': {
+    'name': operatorName,
+    'contact': contact,
+    'privacy_url': privacyUrl,
+  },
 };
 
 Map<String, Object?> consentJson({bool required = false}) => {

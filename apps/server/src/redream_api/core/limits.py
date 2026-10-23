@@ -3,8 +3,9 @@
 Per process: the server runs as exactly one uvicorn worker, so these counters
 see every request. They reset on restart.
 
-Over a limit the answer is 429 with Retry-After (whole seconds); the app shows
-its daily-limit banner on any 429 that carries one.
+Over a limit the answer is 429 with Retry-After (whole seconds). The app tells
+the two apart by the detail: DAILY_LIMIT_REACHED shows its daily-limit banner,
+TOO_MANY_ATTEMPTS a sign-in message.
 """
 
 from __future__ import annotations

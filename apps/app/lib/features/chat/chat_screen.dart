@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
 import 'package:redream_app/core/widgets/app_button.dart';
 import 'package:redream_app/core/widgets/app_card.dart';
 import 'package:redream_app/core/widgets/assistant_sheep.dart';
 import 'package:redream_app/core/widgets/intensity_slider.dart';
 import 'package:redream_app/features/chat/chat_actions.dart';
+import 'package:redream_app/features/chat/chat_errors.dart';
 import 'package:redream_app/features/chat/chat_state.dart';
 import 'package:redream_app/features/chat/message_bubble.dart';
 import 'package:redream_app/features/chat/stage_indicator.dart';
@@ -150,13 +152,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) context.read<ShellTabs>().select(ShellTab.journal);
   }
 
-  String _errorText(String message, AppLocalizations l10n) => switch (message) {
-    ChatState.offline => l10n.errorOffline,
-    ChatState.streamInterrupted => l10n.chatStreamInterrupted,
-    ChatState.noChat => l10n.chatStartErrorBody,
-    _ => message,
-  };
-
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -219,8 +214,8 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             if (state.retryAfterSeconds != null)
               _Banner(
-                title: l10n.budgetExceededTitle,
-                body: l10n.budgetExceededBody,
+                title: l10n.dailyLimitTitle,
+                body: l10n.dailyLimitBody,
                 background: scheme.tertiaryContainer,
                 foreground: scheme.onTertiaryContainer,
                 onDismiss: state.dismissError,
@@ -235,7 +230,7 @@ class _ChatScreenState extends State<ChatScreen> {
               )
             else if (error != null && state.retryAfterSeconds == null)
               _Banner(
-                body: _errorText(error, l10n),
+                body: chatErrorText(error, l10n),
                 background: scheme.errorContainer,
                 foreground: scheme.onErrorContainer,
                 onDismiss: state.dismissError,
@@ -296,6 +291,13 @@ class _ChatScreenState extends State<ChatScreen> {
     final scheme = Theme.of(context).colorScheme;
     final ready = state.chatId != null && !state.sending && !state.loadingChat;
     final busyMic = state.recording || state.transcribing;
+    // Live: the server can turn speech on or off while the app runs. A
+    // recording already under way keeps its button.
+    final serverVoice =
+        busyMic ||
+        context.select<ServerConfig, bool>(
+          (s) => s.instance?.transcription ?? false,
+        );
     final canSend = ready && !busyMic && _input.text.trim().isNotEmpty;
 
     final holding = state.recording && _micHeld;
@@ -381,7 +383,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         ),
-        if (state.voiceInputAvailable) ...[
+        if (state.voiceInputAvailable && serverVoice) ...[
           const SizedBox(width: 8),
           SizedBox(
             key: const ValueKey('mic'),

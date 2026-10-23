@@ -11,6 +11,15 @@ class ApiException implements Exception {
   bool get isConflict => statusCode == 409;
   bool get isRateLimited => statusCode == 429;
 
+  /// The server's per-user daily cap (`DAILY_AI_REQUESTS_PER_USER`); it
+  /// resets at midnight UTC. Other 429s are short throttles.
+  bool get isDailyLimit =>
+      statusCode == 429 && message == 'daily limit reached';
+
+  /// Speech input or output is not configured on this server.
+  bool get isVoiceUnavailable =>
+      statusCode == 503 && message == 'voice_unavailable';
+
   /// Health-data routes refuse until Art. 9 consent is granted.
   bool get isConsentRequired =>
       statusCode == 403 && message == 'consent_required';
