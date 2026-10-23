@@ -23,8 +23,9 @@ class DreamService {
     await _api.post(_base, {...input.toJson(), 'source': 'manual'}),
   );
 
-  Future<Dream> update(int id, DreamInput input) async =>
-      Dream.fromJson(await _api.put('$_base/$id', input.toJson()));
+  Future<Dream> update(int id, DreamInput input) async => Dream.fromJson(
+    await _api.put('$_base/$id', input.toJson()..remove('language')),
+  );
 
   Future<void> delete(int id) => _api.delete('$_base/$id');
 

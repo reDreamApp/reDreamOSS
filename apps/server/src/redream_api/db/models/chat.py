@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..base import Base
@@ -20,6 +20,11 @@ class Chat(Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     language: Mapped[str] = mapped_column(String, nullable=False, default="en")
+    # Set when a crisis message switched `language`: that turn had no AI reply,
+    # so the next AI turn carries `language_switched` (cleared once it is saved).
+    language_switch_pending: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     current_stage: Mapped[str] = mapped_column(String, nullable=False, default="recording")
     is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_nightmare: Mapped[bool | None] = mapped_column(Boolean)

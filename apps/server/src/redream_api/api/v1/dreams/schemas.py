@@ -38,6 +38,7 @@ class DreamCreate(BaseModel):
     image_url: str | None = None
     session_id: str | None = None
     source: str = "manual"
+    language: str | None = Field(default=None, pattern="^(en|de)$")
 
     @model_validator(mode="before")
     @classmethod
@@ -73,6 +74,7 @@ class DreamOut(BaseModel):
     image_url: str | None = None
     session_id: str | None = None
     source: str
+    language: str | None = None
     rehearsal_audio_url: str | None = None
     rehearsal_script: str | None = None
     rehearsal_duration: str | None = None

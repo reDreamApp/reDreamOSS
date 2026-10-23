@@ -38,6 +38,10 @@ class Dream(Base):
     image_url: Mapped[str | None] = mapped_column(String)
     session_id: Mapped[str | None] = mapped_column(String, index=True)
     source: Mapped[str] = mapped_column(String, nullable=False, default="manual", index=True)
+    # en|de (checked in code; the squashed schema adds the CHECK): the chat's
+    # language at the summary (chatbot dreams) or the app's language at
+    # creation (manual dreams); NULL for manual dreams created without one.
+    language: Mapped[str | None] = mapped_column(String)
 
     # Store key under AUDIO_DIR (redream_ai.audio.store); served as a signed link.
     rehearsal_audio_key: Mapped[str | None] = mapped_column(String)

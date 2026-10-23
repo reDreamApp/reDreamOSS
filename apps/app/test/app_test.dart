@@ -828,6 +828,34 @@ void main() {
     expect(find.text('Flying'), findsWidgets);
   });
 
+  testWidgets('a manual dream is created in the app language', (
+    tester,
+  ) async {
+    final (app, api, settings) = await _app(auth: FakeAuth(userId: 'user-1'));
+    await settings.setLanguage('de');
+    Map<String, dynamic>? created;
+    api.on('POST /api/v1/dreams', (_, body) {
+      created = body;
+      return dreamJson(9, title: body['title'] as String, language: 'de');
+    });
+    _tallPhone(tester);
+    await tester.pumpWidget(app);
+    await _settle(tester);
+
+    final de = AppLocalizationsDe();
+    await tester.tap(find.text(de.navJournal).last);
+    await _settle(tester);
+    await tester.tap(find.text(de.journalAddDream));
+    await _settle(tester);
+    await tester.enterText(find.byType(TextField).at(0), 'Fallen');
+    await tester.enterText(find.byType(TextField).at(1), 'Ich bin gefallen.');
+    await tester.tap(find.text(de.editorSave));
+    await _settle(tester);
+
+    expect(created?['language'], 'de');
+    expect(created?['source'], 'manual');
+  });
+
   testWidgets("the journal card shows the practices and today's rehearsal", (
     tester,
   ) async {

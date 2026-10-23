@@ -1,5 +1,7 @@
 from typing import List, Tuple, AsyncGenerator, Optional
+import asyncio
 import contextlib
+import re
 from .models import Conversation, Stage, ChatInput, ChatResponse
 import hashlib
 import logging
@@ -16,7 +18,8 @@ from .prompts import (SYSTEM_PROMPT_TEMPLATES_DE, SYSTEM_PROMPT_TEMPLATES_EN,
                       REWRITING_ONE_MORE_NOTE_DE, REWRITING_ONE_MORE_NOTE_EN,
                       REWRITING_OPENER_NOTE_DE, REWRITING_OPENER_NOTE_EN,
                       REWRITING_NOTHING_YET_NOTE_DE, REWRITING_NOTHING_YET_NOTE_EN,
-                      REPLAY_CHECK_PROMPT, TALK_GATE_PROMPT)
+                      LANGUAGE_SWITCH_NOTE_DE, LANGUAGE_SWITCH_NOTE_EN,
+                      LANGUAGE_CHECK_PROMPT, REPLAY_CHECK_PROMPT, TALK_GATE_PROMPT)
 
 # The LLM endpoint comes from redream_ai.config (LLM_*, environment or .env). The
 # test conftests pin a throwaway endpoint as env vars, which win over any .env.
@@ -25,7 +28,8 @@ from ..config import settings
 # Tracing decorators: no-op stand-ins (reDreamOSS has no tracing backend).
 from ..observability import langfuse_context, observe  # noqa: E402
 
-# Language detection removed; language is controlled via override from client
+# The language comes from the client (language_override). The backend switches
+# it between turns on the AI client's language_check (resolve_language_switch below).
 
 # Routing/response agents are built from the LLM_* settings (see agent.py).
 from .agent import routing_agent, response_agent  # noqa: E402
@@ -60,8 +64,6 @@ def _build_safety_critic():
 
 
 safety_critic = _build_safety_critic()
-
-language = "de"
 
 @observe(as_type="trace", capture_input=False, capture_output=False)
 async def process_chat_message(
@@ -116,7 +118,8 @@ async def process_chat_message(
         response, usage = await get_response_async(
             stage, chat_input.message, conversation,
             safety_constraint=await _stage_note(
-                stage, safety_result, conversation, detected_language, summary_held_back
+                stage, safety_result, conversation, detected_language, summary_held_back,
+                chat_input.language_switched
             )
         )
         conversation.add_message(response, "assistant", stage, language=detected_language)
@@ -206,7 +209,8 @@ async def process_chat_message_stream(
         full_response = ""
         final_usage = {}
         stage_note = await _stage_note(
-            stage, safety_result, conversation, detected_language, summary_held_back
+            stage, safety_result, conversation, detected_language, summary_held_back,
+            chat_input.language_switched
         )
         # aclosing (here and in get_response_stream_async): closing this stream
         # closes the provider response right away, not whenever GC gets to it.
@@ -408,6 +412,98 @@ async def _is_plain_talk(text: str) -> bool:
     return verdict
 
 
+# Words that are common in one language and not words of the other. Left out
+# on purpose: words of both ("in", "so", "man"), and look-alikes with another
+# meaning ("was", "die", "will", "war", "also", "am", "an", "hat", "still",
+# "not", "her", "um", "er", "im"). English contractions are single words
+# ("don't", "i'm"), as the tokenizer keeps the apostrophe.
+_GERMAN_WORDS = frozenset("""
+    ich du sie wir ihr es sich mein meine meinen meinem meiner meines
+    dein deine deinen deinem deiner mir mich dich dir uns
+    nicht kein keine keinen keinem keiner keines nichts niemand alles
+    und oder aber auch noch sehr schon nur jetzt dann dass weil doch mal mehr immer
+    wenn wie ist sind bin bist habe hab hast haben hatte waren wird wurde würde
+    kann kannst möchte brauche geht gibt bitte
+    ein eine einen einem einer der das dem des im vom zum zur über für mit auf zu
+    von nach bei aus
+""".split())
+_ENGLISH_WORDS = frozenset("""
+    i me my myself you your we they she he him his it this that the a of to with for
+    from and but or if is are be been were had have has do does did
+    can could would want wanna need feel know think speak understand help
+    don't dont didn't didnt doesn't isn't wasn't can't cant won't
+    i'm i've i'll it's let's
+    please very already just about how what when where why who there then nobody
+    on at up out
+""".split())
+# The other language's name, in either language; "deutsch" and "englisch"
+# also inside compounds ("Hochdeutsch", "Schulenglisch").
+_OTHER_LANGUAGE_NAME = {
+    "en": re.compile(r"deutsch\w*|englisch\w*|\bgermans?\b", re.IGNORECASE),
+    "de": re.compile(r"englisch\w*|\benglish\w*|\bgermans?\b", re.IGNORECASE),
+}
+_WORD = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*")
+_LANGUAGE_CHECK_TIMEOUT_S = 8.0
+_LANGUAGE_NAMES = {"en": "English", "de": "German"}
+# Answers keyed by a hash of language and text, so that no user text is kept.
+_language_verdicts: dict[str, Optional[str]] = {}
+_LANGUAGE_VERDICTS_MAX = 512
+
+
+def _may_switch_language(text: str, current: str) -> bool:
+    """Cheap check before the model: does the message name or look like the other language?"""
+    if _OTHER_LANGUAGE_NAME[current].search(text):
+        return True
+    words = [w.lower() for w in _WORD.findall(text.replace("\u2019", "'"))]
+    if len(words) < 3:
+        return False
+    other, own = (_GERMAN_WORDS, _ENGLISH_WORDS) if current == "en" else (_ENGLISH_WORDS, _GERMAN_WORDS)
+    other_hits = [w for w in words if w in other]
+    own_hits = sum(1 for w in words if w in own)
+    # One word of the other language is enough when none of the current one
+    # appears: short sentences in distress ("Ich will sterben") must reach the
+    # model, so the crisis check and the helpline get the user's language.
+    return (len(set(other_hits)) >= 2 and len(other_hits) > own_hits) or (
+        bool(other_hits) and own_hits == 0
+    )
+
+
+async def resolve_language_switch(message: str, current: str) -> Optional[str]:
+    """The language the chat continues in when this message switches it ("en" / "de"), else None.
+
+    Only messages that pass the word check above reach the small model (the
+    routing agent, as for _is_plain_talk). It names the message's language
+    (EN / DE / OTHER); the chat switches when that is the other of the two. A
+    timeout, an error, OTHER or any other answer keeps the language, and so
+    does the current language.
+    """
+    text = message.strip()
+    if current not in _LANGUAGE_NAMES or not text or not _may_switch_language(text, current):
+        return None
+    key = hashlib.sha256(f"{current}\n{text.lower()}".encode()).hexdigest()
+    if key in _language_verdicts:
+        return _language_verdicts[key]
+    try:
+        answer, _, _ = await asyncio.wait_for(
+            routing_agent.generate(text, system_prompt=LANGUAGE_CHECK_PROMPT),
+            timeout=_LANGUAGE_CHECK_TIMEOUT_S,
+        )
+    except Exception as e:  # includes the timeout
+        logger.error(f"Language check failed (the language stays): {type(e).__name__}")
+        return None
+    # Exactly one of the three words; "DE/EN" or "EN or DE" keep the language.
+    match = re.fullmatch(r"\s*(EN|DE|OTHER)[\s.!]*", (answer or "").upper())
+    if match is None:
+        logger.warning("Language check gave no usable answer (the language stays)")
+        return None
+    verdict = match.group(1).lower()
+    switched_to = verdict if verdict in _LANGUAGE_NAMES and verdict != current else None
+    if len(_language_verdicts) >= _LANGUAGE_VERDICTS_MAX:
+        _language_verdicts.clear()
+    _language_verdicts[key] = switched_to
+    return switched_to
+
+
 async def _describes_a_change(user_input: str, nightmare_summary: Optional[str]) -> bool:
     """Second opinion on a "replay" verdict: does the message differ from the original?
 
@@ -538,20 +634,27 @@ async def _recording_note(conversation: Conversation, is_english: bool) -> Optio
 
 
 async def _stage_note(
-    stage: str, safety_result, conversation: Conversation, language: str, summary_held_back: bool = False
+    stage: str, safety_result, conversation: Conversation, language: str, summary_held_back: bool = False,
+    language_switched: bool = False
 ) -> Optional[str]:
     """What is added to the stage prompt for this turn, if anything.
 
     The critic's note on a flagged rewrite, or a reminder to stop asking a
     user who has nothing more to add. The model does not keep count by itself
     (2026-10-14 runs: up to 13 questions in a row to "yes" and "no" answers).
+    On the turn the backend switched the chat's language, the switch note
+    comes last.
     """
     is_english = language == "en"
+    note = None
     if stage == Stage.REWRITING.value:
-        return await _rewriting_note(safety_result, conversation, is_english, summary_held_back)
-    if stage == Stage.RECORDING.value:
-        return await _recording_note(conversation, is_english)
-    return None
+        note = await _rewriting_note(safety_result, conversation, is_english, summary_held_back)
+    elif stage == Stage.RECORDING.value:
+        note = await _recording_note(conversation, is_english)
+    if not language_switched:
+        return note
+    switch_note = LANGUAGE_SWITCH_NOTE_EN if is_english else LANGUAGE_SWITCH_NOTE_DE
+    return note + "\n\n" + switch_note if note else switch_note
 
 
 @observe(name="safety_evaluation", as_type="generation")

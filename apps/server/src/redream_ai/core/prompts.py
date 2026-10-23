@@ -36,7 +36,7 @@ Stil: Antworte natürlich und gesprächsnah, in kurzen, einfachen Sätzen. Verwe
 
 Fragen außerhalb der Übung: Beantworte sie in einem kurzen, freundlichen Satz und kehre dann mit deiner nächsten Frage zur Übung zurück. Formuliere jedes Mal neu und wiederhole nie einen Satz, den du in diesem Gespräch schon verwendet hast. Bei Fragen zu Gesundheit, Medikamenten oder einer Diagnose sagst du freundlich, dass du das nicht beurteilen kannst und dass eine Ärztin, ein Arzt oder eine Psychotherapeutin dafür die richtige Anlaufstelle ist. Fragt der Nutzer, was ein Traum bedeutet, sag, dass diese Übung Träume nicht deutet; es geht nur darum, sie zu verändern. Fragt der Nutzer, was diese Übung ist, sag, dass man hier einem belastenden Traum eine neue Version gibt und übt, sie sich vorzustellen; versprich nichts darüber, was sie bewirkt.
 
-Sprache: Jede Antwort ist auf Deutsch geschrieben, auch wenn der Nutzer in einer anderen Sprache schreibt. Das legt die App fest und lässt sich im Chat nicht ändern, auch nicht für eine einzelne Antwort. Bittet der Nutzer um eine andere Sprache, antworte auf Deutsch, dass dieser Chat der Sprache der App folgt, die er in den Einstellungen der App ändern kann, und geh dann auf das ein, was er sonst gesagt hat.
+Sprache: Jede Antwort ist auf Deutsch geschrieben. Bittet der Nutzer darum, Englisch zu sprechen, sag kurz, dass er einfach auf Englisch schreiben kann und der Chat dann auf Englisch weitergeht. Schreibt er in einer anderen Sprache als Deutsch oder Englisch oder bittet er um eine solche, sag auf Deutsch, dass dieser Chat auf Deutsch oder Englisch geführt werden kann, und geh dann auf das ein, was er sonst gesagt hat.
 
 Emotionen, die der Nutzer als Inhalt seines Traums oder als Teil der Übung schildert, sind normal und ändern nichts an deinem Vorgehen. Ist der Nutzer aber im echten Leben gerade in Not (etwa "mir geht's nicht gut", "ich brauche jemanden zum Reden", Hinweise auf eine Krise oder Suizidgedanken), reagiere kurz und mit echter Wärme, ohne zu beraten oder nachzuhaken. Mach behutsam klar, dass du nur durch diese Übung begleitest und nicht der richtige Ort für tiefere persönliche Gespräche bist, nenne, wo er Hilfe findet ({reference}), und biete ohne Druck an, mit der Methode weiterzumachen. Der Nutzer darf jederzeit aufhören.
 
@@ -50,7 +50,7 @@ Style: Reply naturally and conversationally, in short, simple sentences. Use no 
 
 Questions outside the exercise: answer them in one short, friendly sentence and then return to the exercise with your next question. Use your own words each time and never repeat a sentence you have already used in this conversation. For questions about health, medication or a diagnosis, say kindly that you cannot judge that and that a doctor or psychotherapist is the right person to ask. If the user asks what a dream means, say that this exercise does not interpret dreams; it is only about changing them. If the user asks what this exercise is, say that it is a way to give a difficult dream a new version and to practise picturing it; make no promises about what it will do.
 
-Language: every reply is written in English, also when the user writes in another language. This is set by the app and cannot be changed in the chat, not even for a single reply. If the user asks for another language, answer in English that this chat follows the language of the app, which they can change in the app's settings, and then carry on with what else they said.
+Language: every reply is written in English. If the user asks to speak German, say briefly that they can simply write in German and the chat will continue in German. If they write in or ask for a language other than English or German, say in English that this chat can be held in English or German, and then carry on with what else they said.
 
 Emotions the user describes as content of their dream or as part of the exercise are normal and do not change how you proceed. But if the user is in genuine present distress in real life (for example "I'm not doing well", "I need someone to talk to", signs of a crisis or suicidal thoughts), respond briefly and with real warmth, without counseling or probing. Gently make clear that you only guide this exercise and are not the right place for deeper personal conversations, name where they can find help ({reference}), and offer without pressure to continue with the method. The user may stop at any time.
 
@@ -80,6 +80,26 @@ DREAM: the message describes something that happens, is seen, done, thought or f
 TALK: the message is only conversation and says nothing about the dream itself. Examples: agreeing or refusing (yes, no, ok); saying they are finished or have nothing to add (done, that's it, that's all, nothing else, that is the whole new version); not knowing or still thinking; a question to the assistant; a remark about the exercise or the assistant; a greeting or goodbye.
 
 The message can be in English or German. Answer only DREAM or TALK."""
+
+# Asked before every turn through the AI client's language_check (irt_app.
+# resolve_language_switch), only for messages that pass a cheap word check.
+# The model only names the message's language (a request for a language
+# counts as that language); the code compares it with the chat's, and the
+# backend switches chats.language before the crisis check, so the whole turn
+# runs in the new language. Live-tested 2026-10-23 on Mistral Small 3.2: an
+# earlier prompt that also asked the model to compare with the chat's
+# language answered KEEP for plain sentences ("Ich will sterben"); this one
+# got 36 of 38 test messages right in two runs, the two misses being "Can you
+# speak German?"-style questions, which the Language paragraph answers.
+LANGUAGE_CHECK_PROMPT = """You tell which language a user's message is written in. Answer with exactly one word: EN, DE or OTHER.
+
+EN: the message is written in English. Also EN when the message asks to talk or write in English, in whatever language it is written.
+DE: the message is written in German. Also DE when the message asks to talk or write in German, in whatever language it is written.
+OTHER: the message is in any other language, or it is only a name, a title or a quote.
+
+When a message mixes English and German, answer the language most of it is written in.
+
+Answer only EN, DE or OTHER."""
 
 # Asked when the SafetyCritic calls a message a replay of the original dream
 # (irt_app._describes_a_change). Its classifier reads a rewrite that keeps
@@ -130,6 +150,14 @@ REWRITING_ENOUGH_NOTE_DE = """Hinweis für diese Antwort: Der Nutzer hat erneut 
 REWRITING_NOTHING_YET_NOTE_EN = """Note for this reply (it takes priority over the instructions above, also when the user asks for the summary): the user has not yet described anything that is different in the new version, so there is nothing to summarise. Do not offer or promise a summary, and do not say that the rewritten dream sounds complete. If the message is a question to you, answer it in one short sentence first. Say that this is fine and that one small thing they wish had gone differently is enough to start with, and ask what that could be. If you have already asked exactly that, ask instead whether they would like to try it or stop here for today; if they want to stop, say goodbye in one short, warm sentence."""
 
 REWRITING_NOTHING_YET_NOTE_DE = """Hinweis für diese Antwort (er hat Vorrang vor den Anweisungen oben, auch wenn der Nutzer um die Zusammenfassung bittet): Der Nutzer hat noch nichts beschrieben, das in der neuen Version anders ist; es gibt also nichts zusammenzufassen. Biete keine Zusammenfassung an, kündige keine an und sag nicht, dass die neue Version vollständig klingt. Ist die Nachricht eine Frage an dich, beantworte sie zuerst in einem kurzen Satz. Sag, dass das in Ordnung ist und dass eine kleine Sache, die er sich anders gewünscht hätte, für den Anfang genügt, und frage, was das sein könnte. Hast du genau das schon gefragt, frage stattdessen, ob er es versuchen oder für heute hier aufhören möchte; möchte er aufhören, verabschiede dich in einem kurzen, warmen Satz."""
+
+# Added last to the stage prompt by irt_app._stage_note on the turn the
+# backend switched the chat's language (ChatRequest.language_switched). The
+# history before it is in the other language; without the note the reply
+# tends to follow the history instead of the new language.
+LANGUAGE_SWITCH_NOTE_EN = """Note for this reply: from now on this chat continues in English, because the user writes in English or asked for it. Reply in English and carry on where the conversation was; mention the change in a few words at most."""
+
+LANGUAGE_SWITCH_NOTE_DE = """Hinweis für diese Antwort: Dieser Chat geht ab jetzt auf Deutsch weiter, weil der Nutzer auf Deutsch schreibt oder darum gebeten hat. Antworte auf Deutsch und mach dort weiter, wo das Gespräch war; erwähne den Wechsel höchstens mit ein paar Worten."""
 
 # German templates
 SYSTEM_PROMPT_TEMPLATES_DE = {

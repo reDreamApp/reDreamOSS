@@ -55,8 +55,15 @@ class _PracticeAudioScreenState extends State<PracticeAudioScreen> {
   }
 
   String get _language => AppSettings.normalizeLanguage(
-    _dream.rehearsalLanguage ?? context.read<AppSettings>().language,
+    _dream.rehearsalLanguageOr(context.read<AppSettings>().language),
   );
+
+  /// Audio in [_language]. Audio made in another language (an older dream
+  /// whose chat switched language) counts as missing, so it is regenerated.
+  bool get _hasAudio =>
+      (_dream.rehearsalAudioUrl ?? '').isNotEmpty &&
+      (_dream.rehearsalLanguage == null ||
+          _dream.rehearsalLanguage == _language);
 
   Future<File> _cacheFile() async {
     final owner = context.read<AuthService>().userId;
@@ -99,10 +106,10 @@ class _PracticeAudioScreenState extends State<PracticeAudioScreen> {
         return;
       }
       final journal = context.read<JournalState>();
-      if ((_dream.rehearsalAudioUrl ?? '').isEmpty) {
+      if (!_hasAudio) {
         _dream = await journal.reload(_dream.id);
       }
-      if ((_dream.rehearsalAudioUrl ?? '').isEmpty && mounted) {
+      if (!_hasAudio && mounted) {
         _dream = await journal.generateRehearsal(_dream, language: _language);
       }
       if ((_dream.rehearsalAudioUrl ?? '').isNotEmpty) {

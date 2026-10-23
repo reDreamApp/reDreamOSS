@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/api/api_exception.dart';
+import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/utils/errors.dart';
 import 'package:redream_app/core/widgets/app_button.dart';
 import 'package:redream_app/core/widgets/feedback.dart';
@@ -71,6 +72,7 @@ class _DreamEditorScreenState extends State<DreamEditorScreen> {
         ? _rewritten.text.trim()
         : null,
     intensity: _isNightmare ? _intensity : null,
+    language: context.read<AppSettings>().language,
   );
 
   Future<void> _save() async {

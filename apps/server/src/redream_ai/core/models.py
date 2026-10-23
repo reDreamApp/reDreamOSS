@@ -43,6 +43,7 @@ class ChatInput(BaseModel):
     message: str
     user_id: Optional[str] = None
     language_override: Optional[str] = None  # Added language override
+    language_switched: bool = False  # the backend switched the chat to language_override on this turn
     
     @classmethod
     def from_dict(cls, data: dict):

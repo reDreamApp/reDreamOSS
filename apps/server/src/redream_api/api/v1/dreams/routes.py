@@ -54,6 +54,7 @@ def _to_out(dream: Dream) -> DreamOut:
         image_url=dream.image_url,
         session_id=dream.session_id,
         source=dream.source,
+        language=dream.language,
         # A fresh short-lived link on every answer; the row keeps the key.
         rehearsal_audio_url=link_for(dream.rehearsal_audio_key),
         rehearsal_script=dream.rehearsal_script,
@@ -203,12 +204,16 @@ async def generate_rehearsal(
     if not dream.rewritten_dream or not dream.rewritten_dream.strip():
         raise HTTPException(status.HTTP_409_CONFLICT, "rewritten_dream is required for rehearsal")
 
-    # Cache: if audio already exists and matches the requested language, reuse.
+    # The dream's own language wins; the body's (the app setting, which older
+    # app builds always send) only covers dreams without one.
+    language = dream.language or body.language
+
+    # Cache: if audio already exists and matches the effective language, reuse.
     # This holds while speech output is off too: it signs a fresh link to the
     # stored file (as GET /rehearsal-url does) and sends nothing to TTS.
     if (
         dream.rehearsal_audio_key
-        and dream.rehearsal_language == body.language
+        and dream.rehearsal_language == language
         and dream.rehearsal_generated_at is not None
     ):
         if await _has_audio(dream):
@@ -234,7 +239,7 @@ async def generate_rehearsal(
                 "dream_id": str(dream.id),
                 "user_id": str(user.id),
                 "rewritten_dream": dream.rewritten_dream,
-                "language": body.language,
+                "language": language,
             }
         )
     except AIServiceError as exc:
@@ -249,7 +254,7 @@ async def generate_rehearsal(
     dream.rehearsal_audio_key = key
     dream.rehearsal_script = result.get("script")
     dream.rehearsal_duration = result.get("duration_estimate")
-    dream.rehearsal_language = body.language
+    dream.rehearsal_language = language
     dream.rehearsal_generated_at = datetime.now(UTC)
     try:
         saved = await repo.save(dream)

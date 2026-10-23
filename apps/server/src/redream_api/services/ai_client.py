@@ -10,6 +10,8 @@ Contract reference:
 - chat_stream       : same request → SSE frames (ADR 0009); the frame
                       contract is documented in redream_ai's api/chat.py
 - safety_classify   : user text → risk classification (ADR 0005)
+- language_check    : user text + chat language → the language the chat
+                      continues in (en|de); called before the classifier
 - transcribe        : audio bytes → transcript (ADR 0010)
 - rehearsal_generate: dream → audio_key (the MP3 under AUDIO_DIR) + script +
                       duration
@@ -43,6 +45,11 @@ log = logging.getLogger(__name__)
 _CHAT_TIMEOUT = 90.0
 _TRANSCRIBE_TIMEOUT = 90.0
 _REHEARSAL_TIMEOUT = 150.0
+# The AI side gives its model call 8s; a check that takes longer keeps the
+# language rather than holding up the turn.
+_LANGUAGE_CHECK_TIMEOUT = 10.0
+
+_CHAT_LANGUAGES = ("en", "de")
 
 # The 503 detail of /audio/transcribe and /dreams/{id}/rehearsal while their
 # half of speech is off.
@@ -68,6 +75,7 @@ class BaseAiClient(Protocol):
     async def chat(self, payload: dict[str, Any]) -> dict[str, Any]: ...
     def chat_stream(self, payload: dict[str, Any]) -> AsyncGenerator[str, None]: ...
     async def safety_classify(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+    async def language_check(self, message: str, language: str) -> str: ...
     async def transcribe(self, *, file_name: str, audio_bytes: bytes) -> dict[str, Any]: ...
     async def rehearsal_generate(self, payload: dict[str, Any]) -> dict[str, Any]: ...
     @property
@@ -226,6 +234,30 @@ class InProcessAiClient:
                 SafetyRequest.model_validate(payload), llm=self._safety_llm
             )
             return resp.model_dump(mode="json")
+
+    async def language_check(self, message: str, language: str) -> str:
+        """The language the chat continues in.
+
+        Never raises: a failure, a timeout or an answer that is not en/de keeps
+        `language`, so the turn always proceeds. The warning leaves out the
+        message text (user content does not go into logs).
+        """
+        from redream_ai.api import language as ai_language
+        from redream_ai.models import LanguageCheckRequest
+
+        try:
+            async with asyncio.timeout(_LANGUAGE_CHECK_TIMEOUT):
+                resp = await ai_language.language_check(
+                    LanguageCheckRequest.model_validate({"message": message, "language": language})
+                )
+            new = resp.language.value
+        except Exception as exc:  # never raises: the turn must go on
+            log.warning("language_check failed: %s — keeping %s", type(exc).__name__, language)
+            return language
+        if new not in _CHAT_LANGUAGES:
+            log.warning("language_check returned an invalid language — keeping %s", language)
+            return language
+        return str(new)
 
     async def transcribe(self, *, file_name: str, audio_bytes: bytes) -> dict[str, Any]:
         from redream_ai.api import audio as ai_audio

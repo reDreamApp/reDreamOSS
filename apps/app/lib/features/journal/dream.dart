@@ -15,6 +15,7 @@ class Dream {
     this.imageUrl,
     this.sessionId,
     this.source = 'manual',
+    this.language,
     this.rehearsalAudioUrl,
     this.rehearsalScript,
     this.rehearsalDuration,
@@ -38,6 +39,7 @@ class Dream {
     imageUrl: json['image_url'] as String?,
     sessionId: json['session_id'] as String?,
     source: json['source'] as String? ?? 'manual',
+    language: json['language'] as String?,
     rehearsalAudioUrl: json['rehearsal_audio_url'] as String?,
     rehearsalScript: json['rehearsal_script'] as String?,
     rehearsalDuration: json['rehearsal_duration'] as String?,
@@ -63,6 +65,11 @@ class Dream {
   final String? imageUrl;
   final String? sessionId;
   final String source;
+
+  /// The dream's own language (`en`/`de`): the chat's language when the
+  /// dream came out of a chat, the app's at creation for manual dreams. Null
+  /// for older dreams and servers that do not send it.
+  final String? language;
   final String? rehearsalAudioUrl;
   final String? rehearsalScript;
   final String? rehearsalDuration;
@@ -78,6 +85,12 @@ class Dream {
 
   /// The chat this dream came out of (`session_id` holds the chat id).
   int? get chatId => int.tryParse(sessionId ?? '');
+
+  /// Language to ask the audio rehearsal in: the dream's own, else the one
+  /// its audio was made in, else [appLanguage]. The server lets the dream's
+  /// language win as well.
+  String rehearsalLanguageOr(String appLanguage) =>
+      language ?? rehearsalLanguage ?? appLanguage;
 
   bool practicedOn(DateTime day) {
     final local = day.toLocal();
@@ -105,6 +118,7 @@ class Dream {
     'image_url': imageUrl,
     'session_id': sessionId,
     'source': source,
+    'language': language,
     'rehearsal_audio_url': rehearsalAudioUrl,
     'rehearsal_script': rehearsalScript,
     'rehearsal_duration': rehearsalDuration,
@@ -138,6 +152,7 @@ class Dream {
     imageUrl: imageUrl,
     sessionId: sessionId,
     source: source,
+    language: language,
     rehearsalAudioUrl: rehearsalAudioUrl,
     rehearsalScript: rehearsalScript,
     rehearsalDuration: rehearsalDuration,
@@ -159,6 +174,7 @@ class DreamInput {
     required this.isNightmare,
     this.rewrittenDream,
     this.intensity,
+    this.language,
   });
 
   final String title;
@@ -167,12 +183,17 @@ class DreamInput {
   final String? rewrittenDream;
   final int? intensity;
 
+  /// The app's language, sent when the dream is created. Updates leave it
+  /// out (`DreamService.update`): the server only takes it on create.
+  final String? language;
+
   Map<String, dynamic> toJson() => {
     'title': title,
     'original_dream': originalDream,
     'rewritten_dream': rewrittenDream,
     'intensity': intensity,
     'is_nightmare': isNightmare,
+    if (language != null) 'language': language,
   };
 }
 
@@ -196,6 +217,7 @@ class DreamDraft {
       rewrittenDream: json['rewritten_dream'] as String?,
       intensity: json['intensity'] as int?,
       isNightmare: json['is_nightmare'] as bool? ?? false,
+      language: json['language'] as String?,
     ),
     createdAt: DateTime.parse(json['created_at'] as String),
     lastEdited: DateTime.parse(json['last_edited'] as String),
@@ -234,6 +256,7 @@ class DreamDraft {
     isCurrentDream: remote?.isCurrentDream ?? false,
     sessionId: remote?.sessionId,
     source: remote?.source ?? 'manual',
+    language: remote == null ? input.language : remote.language,
   );
 
   DreamDraft copyWith({

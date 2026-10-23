@@ -16,6 +16,8 @@ Accounts: `REGISTRATION_MODE` is `invite` by default, and then `INVITE_CODE` (8 
 
 `HELPLINE_TEXT_EN` / `HELPLINE_TEXT_DE` (the message the app shows when the crisis check flags a message) and `HELPLINE_PROMPT_EN` / `HELPLINE_PROMPT_DE` (the short help reference the chat model names on real distress) are optional; blank keeps a neutral default without country-specific numbers (limits and a German example in `.env.example`).
 
+A chat can switch between English and German mid-chat: before the crisis check, each message passes a cheap word check and, if it looks like (or asks for) the other language, one short `LLM_SMALL_MODEL` call; on a switch the chat continues in that language (crisis check, helpline text and reply included). Any failure keeps the language. A dream keeps the chat's language at the summary, and its rehearsal audio uses it.
+
 ## Tests
 
 ```bash
@@ -31,7 +33,7 @@ Fully offline: in-memory SQLite (aiosqlite) with a `FakeAiClient` for `tests/api
 - `redream_api.services` — AI client (in-process, maps every AI failure to `AIServiceError`), accounts (email rules, users, passwords — shared by the auth routes and the CLI), rehearsal-audio links (short-lived HMAC-signed, served by `GET /api/v1/audio/files/{key}`) and folder deletes (dream and account deletion).
 - `redream_api.core` — settings, dependencies (`get_current_user`: bearer token → its sha256 → `auth_tokens` row, 30 days sliding), argon2id passwords, and the in-memory rate limits and daily AI-request cap (`limits.py`; one worker, so one set of counters).
 - `redream_api.cli` — the operator CLI (`create-user`, `set-password`).
-- `redream_ai.api` — the plain async functions the AI client calls (`chat`, `chat_stream`, `safety_classify`, `transcribe`, `rehearsal_generate`).
+- `redream_ai.api` — the plain async functions the AI client calls (`chat`, `chat_stream`, `safety_classify`, `language_check`, `transcribe`, `rehearsal_generate`).
 - `redream_ai.core` / `redream_ai.clinical_safety` — vendored IRT engine + `SafetyCritic` (excluded from lint/type rules). Chat/routing/safety-critic models come from `LLM_MODEL` / `LLM_SMALL_MODEL`.
 - `redream_ai.safety.classifier` — crisis classifier on `LLM_SAFETY_MODEL` (default `LLM_SMALL_MODEL`), no fallback; a failed check fails the chat turn.
 - `redream_ai.audio` — TTS + the local MP3 store under `AUDIO_DIR`, STT; one provider each from `STT_*` / `TTS_*` (see `.env.example`), off without a model (the routes answer 503 `voice_unavailable`).

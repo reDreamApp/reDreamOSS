@@ -89,8 +89,9 @@ class FakeAiClient:
     Use `queue_chat`, `queue_safety`, `queue_transcribe`, `queue_rehearsal` to
     pre-load responses. Calls are recorded on `self.calls` for assertions.
 
-    Default behaviour (queue empty) for `safety_classify` is `risk=none` —
-    that's the common case and keeps tests focused on the interesting paths.
+    Default behaviour (queue empty) for `safety_classify` is `risk=none`, and
+    for `language_check` the chat's current language (no switch) — the common
+    cases, which keep tests focused on the interesting paths.
 
     Speech is off (`stt_enabled` / `tts_enabled` False), as with no STT_MODEL /
     TTS_MODEL: the audio routes answer 503. The `voice_on` fixture switches
@@ -101,6 +102,7 @@ class FakeAiClient:
         self._chat: list[dict[str, Any]] = []
         self._chat_stream: list[Any] = []
         self._safety: list[dict[str, Any]] = []
+        self._language: list[str] = []
         self._transcribe: list[dict[str, Any]] = []
         self._rehearsal: list[dict[str, Any]] = []
         self.calls: list[dict[str, Any]] = []
@@ -120,6 +122,11 @@ class FakeAiClient:
 
     def queue_safety(self, response: dict[str, Any]) -> None:
         self._safety.append(response)
+
+    def queue_language(self, language: str) -> None:
+        """The language the next `language_check` returns (like the real
+        client, a failure is already folded into "the current language")."""
+        self._language.append(language)
 
     def queue_transcribe(self, response: dict[str, Any]) -> None:
         self._transcribe.append(response)
@@ -171,6 +178,14 @@ class FakeAiClient:
         if "__raise__" in response:
             raise response["__raise__"]
         return response
+
+    async def language_check(self, message: str, language: str) -> str:
+        self.calls.append(
+            {"method": "language_check", "payload": {"message": message, "language": language}}
+        )
+        if not self._language:
+            return language
+        return self._language.pop(0)
 
     async def transcribe(self, *, file_name: str, audio_bytes: bytes) -> dict[str, Any]:
         self.calls.append(

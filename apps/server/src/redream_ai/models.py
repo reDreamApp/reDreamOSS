@@ -82,6 +82,14 @@ class ChatRequest(BaseModel):
             "None on turns before the summary exists."
         ),
     )
+    language_switched: bool = Field(
+        default=False,
+        description=(
+            "True on the turn the backend switched the chat to `language` (after "
+            "`language_check`). The reply then gets a note to continue in the new "
+            "language."
+        ),
+    )
 
 
 class SummaryStructured(BaseModel):
@@ -180,6 +188,25 @@ class SafetyResponse(BaseModel):
     categories: list[SafetyCategory] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
     prompt_version: str
+
+
+# ---------------------------------------------------------------------------
+# language_check — does the chat switch between English and German?
+# ---------------------------------------------------------------------------
+
+
+class LanguageCheckRequest(BaseModel):
+    message: str = Field(description="The user's latest message.")
+    language: Language = Field(description="The chat's current language.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class LanguageCheckResponse(BaseModel):
+    language: Language = Field(description="The language the chat continues in.")
+    switched: bool = Field(description="True when `language` differs from the request's.")
+
+    model_config = ConfigDict(extra="forbid")
 
 
 # ---------------------------------------------------------------------------

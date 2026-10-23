@@ -136,6 +136,7 @@ Map<String, dynamic> dreamJson(
   List<String> practices = const [],
   bool current = false,
   String? sessionId,
+  String? language,
 }) => {
   'id': id,
   'title': title,
@@ -150,6 +151,7 @@ Map<String, dynamic> dreamJson(
   'image_url': null,
   'session_id': sessionId,
   'source': 'manual',
+  'language': language,
   'rehearsal_audio_url': null,
   'rehearsal_script': null,
   'rehearsal_duration': null,
