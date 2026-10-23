@@ -1,4 +1,4 @@
-"""TTS: one provider from configuration (TTS_*) + the local audio store (ADR 0010).
+"""TTS: one provider from configuration (TTS_*) + the local audio store (ADR 0013).
 
 Fully offline: an httpx.MockTransport goes in via the module's `_transport`
 seam and stands in for the speech endpoint; the MP3s land in this test's

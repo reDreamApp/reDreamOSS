@@ -12,7 +12,7 @@ Contract reference:
 - safety_classify   : user text → risk classification (ADR 0005)
 - language_check    : user text + chat language → the language the chat
                       continues in (en|de); called before the classifier
-- transcribe        : audio bytes → transcript (ADR 0010)
+- transcribe        : audio bytes → transcript (ADR 0013)
 - rehearsal_generate: dream → audio_key (the MP3 under AUDIO_DIR) + script +
                       duration
 - llm_configured    : whether the chat endpoint and models are set (LLM_REQUIRED);

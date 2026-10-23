@@ -30,3 +30,7 @@ Prompt copy must:
 
 ## Alternatives considered
 - **Clinical or therapeutic positioning**: not chosen; outside the scope of this project.
+
+## Amendment (2026-10-23) — reDreamOSS
+
+Applies unchanged to reDreamOSS and to every server built from it. `apps/app/test/wording_test.dart` checks all user-facing texts (EN, DE, the iOS microphone text): no therapy, treatment or effect claims and no named conditions outside the exact negated disclaimer phrases, and no operator or provider names. Operators are asked not to advertise their server with such claims either (`docs/SELF_HOSTING.md`).

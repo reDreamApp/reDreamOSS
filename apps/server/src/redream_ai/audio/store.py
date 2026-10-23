@@ -1,4 +1,4 @@
-"""Rehearsal MP3s on the local disk, under AUDIO_DIR (ADR 0010).
+"""Rehearsal MP3s on the local disk, under AUDIO_DIR (ADR 0013).
 
 Key: ``users/{user_id}/{dream_id}/{language}-{hash}.mp3``, relative to
 AUDIO_DIR. The per-user folder is what account deletion (DELETE /users/me)

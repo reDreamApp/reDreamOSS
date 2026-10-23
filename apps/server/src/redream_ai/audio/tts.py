@@ -1,4 +1,4 @@
-"""TTS — render the rewritten dream as rehearsal audio (ADR 0010).
+"""TTS — render the rewritten dream as rehearsal audio (ADR 0013).
 
 Contract (what the backend's `ai_client.rehearsal_generate` calls, in-process
 via `api.audio.rehearsal_generate`):

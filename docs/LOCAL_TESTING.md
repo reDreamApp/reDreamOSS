@@ -1,120 +1,66 @@
-# Local testing — simulators + local Supabase
+# Local testing
 
-How to run the full stack against a **local, throwaway database** (no cloud
-Supabase, no production) and smoke-test the app on iOS and Android simulators.
-Set up 2026-07-05.
+How to run the server and the app on your own machine, and which tests cover what.
 
-## The test database (local Supabase via Docker)
-
-The repo is a Supabase CLI project (`supabase/config.toml`). The local stack
-runs entirely in Docker and applies `supabase/migrations/` on start — schema
-parity with production comes for free.
+## The offline suites (no keys, no database)
 
 ```bash
-# Prereqs: Docker Desktop running; supabase CLI (installed in the
-# `dreamapp_env` conda env: /opt/miniconda3/envs/dreamapp_env/bin)
-supabase start          # first run pulls images; later runs are seconds
-supabase status         # prints URLs + keys
-supabase stop           # stop containers (keeps data)
-supabase db reset       # wipe + re-apply migrations (fresh test DB)
+make test        # server (tests/ai + tests/api on SQLite), deploy checks, Flutter tests
+make lint        # ruff + mypy, deploy-check lint, flutter analyze (redream_api has a few known
+                 # lint findings, informational in CI: run the other targets on their own)
 ```
 
-Fixed local endpoints (CLI demo defaults — public knowledge, not secrets):
+- `apps/server/tests/api` and `tests/ai` run on in-memory SQLite with fake AI and LLM clients: no network, no API keys.
+- `apps/app/test` drives real widgets against an in-memory fake server (`test/fake_api.dart`), including the address screen, sign-in, consent, chat streaming and the journal. `test/wording_test.dart` checks every user-facing text against the self-help framing.
+- `apps/server/tests/deploy` checks `compose.yaml`, `.env.example` and `scripts/init-env.sh` without Docker.
 
-| What | Value |
-|---|---|
-| API / auth | `http://127.0.0.1:54321` |
-| Postgres | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
-| Studio | `http://127.0.0.1:54323` |
-| Mail catcher (Mailpit) | `http://127.0.0.1:54324` |
-| JWKS | `http://127.0.0.1:54321/auth/v1/.well-known/jwks.json` |
+Run Flutter tests with `--concurrency=2` on a laptop; the default starts one tester per core.
 
-Local GoTrue signs access tokens with **ES256 + kid** and publishes the JWKS,
-so `apps/api`'s strict JWKS verification works unchanged — only `.env` URLs
-differ from cloud.
+## The server against a real Postgres
 
-### Test user
-
-`test@local.dev` / `Test-12345-chat` — created via the admin API (survives
-`supabase stop`, wiped by `supabase db reset`):
+Any Postgres 16+ works (a local install, `docker run postgres:17`, or the compose stack's `db` service).
 
 ```bash
-SRK=<SERVICE_ROLE_KEY from `supabase status`>
-curl -X POST http://127.0.0.1:54321/auth/v1/admin/users \
-  -H "apikey: $SRK" -H "Authorization: Bearer $SRK" \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"test@local.dev","password":"Test-12345-chat","email_confirm":true}'
+make init-env                      # .env at the repo root, from .env.example
+# in .env: DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@localhost:5432/DB and the LLM_* values
+make db-migrate                    # applies apps/server/migrations
+make api-dev                       # the server on http://localhost:8001, reloads on code changes
+make create-user EMAIL=you@example.org   # only for the compose stack; locally:
+cd apps/server && uv run --env-file ../../.env python -m redream_api.cli create-user you@example.org
 ```
 
-## Env files
+`make db-test` runs `tests/pg` (the migration runner, schema drift against the ORM models, a smoke test from sign-up to account deletion) against `TEST_DATABASE_URL`, which must be an empty, throwaway database. CI does the same on Postgres 17 and also builds and starts the whole compose stack.
 
-`apps/api/.env` and `apps/app/.env` currently point at the local stack.
-Variants (all gitignored):
+Without `LLM_*` values the server still starts (`/api/v1/health` reports `llm_ready: false`): sign-up, consent and the journal work, chat turns fail with an error.
 
-- `apps/api/.env.cloud.bak`, `apps/app/.env.cloud.bak` — the previous cloud
-  Supabase config (NOTE: that project ref was NXDOMAIN as of 2026-07-05).
-- `apps/app/.env.android.bak` — local stack as seen from the **Android
-  emulator**: host is `10.0.2.2`, not `localhost`. `cp` it over `.env` before
-  an emulator build; Flutter bundles `.env` as an asset at **build time**, so
-  a rebuild is required after swapping.
-
-`apps/ai/.env` is unchanged (real Mistral/Scaleway keys; the AI service is
-stateless and DB-free — its Supabase storage config is only used for
-rehearsal audio).
-
-## Running the services
-
-```bash
-cd apps/ai  && uv run uvicorn redream_ai.main:app  --port 8080
-cd apps/api && uv run uvicorn redream_api.main:app --port 8001
-# health: :8080/health and :8001/api/v1/health
-```
-
-## The live smoke test (both platforms)
-
-`apps/app/integration_test/live_smoke_test.dart` drives the real app: signs in
-as the test user, opens the chat tab, sends a message, and waits (≤120 s) for
-the streamed AI reply. It hits the **real LLM** — it is deliberately not part
-of `flutter test` / CI.
-
-Two things the test does that look odd but are load-bearing:
-
-- It seeds **in-memory SharedPreferences** with `onboarding_seen=true` before
-  launch. HomeScreen pushes the first-run onboarding **fullscreen** one frame
-  after sign-in; the opaque route puts MainScreen offstage and every widget
-  finder silently stops matching. The in-memory prefs also drop any persisted
-  Supabase session, so each run signs in fresh.
-- It switches tabs through `TabNavigator` instead of tapping the nav bar —
-  a missed tap otherwise strands the run on the home tab.
+## The app against your local server
 
 ```bash
 cd apps/app
-# iOS (localhost .env):
-fvm flutter test integration_test/live_smoke_test.dart -d <ios-sim-udid> --timeout none
-
-# Android (swap env first, then rebuild):
-cp .env.android.bak .env
-fvm flutter test integration_test/live_smoke_test.dart -d emulator-5554 --timeout none
-cp .env.ios.bak .env    # or restore whichever variant you need
+fvm flutter run          # on an emulator or a device
 ```
 
-Simulators:
-- iOS: `xcrun simctl list devices available` (any iPhone 17 device works).
-- Android: AVD `dreamapp_test` (Pixel 7, API 36) —
-  `/opt/homebrew/share/android-commandlinetools/emulator/emulator -avd dreamapp_test`
-  with `JAVA_HOME=/opt/miniconda3/envs/dreamapp_env/lib/jvm`.
-  Debug builds allow cleartext HTTP via `app/src/debug/AndroidManifest.xml`
-  (`usesCleartextTraffic` — debug-only, not in release).
+On first start the app asks for the server address. Type the scheme: an address without one is taken as `https://`.
 
-## Gotchas
+| Where the app runs | Address |
+|---|---|
+| Android emulator | `http://10.0.2.2:8001` |
+| iOS simulator | `http://localhost:8001` |
+| A phone on your Wi-Fi | `http://<your computer's LAN address>:8001`, with the server listening on all interfaces: `cd apps/server && uv run --env-file ../../.env uvicorn redream_api.main:app --host 0.0.0.0 --port 8001` |
 
-- **Local ≠ load-bearing:** all keys/JWT secrets above are the CLI's shared
-  demo defaults. Never reuse them outside `supabase start`.
-- **macOS TCC:** Claude Code / terminals need the "Documents Folder"
-  permission to touch this repo; a revocation manifests as
-  `Operation not permitted` on every file. Toggle in System Settings →
-  Privacy & Security → Files and Folders, then fully restart the app.
-- The Android SDK lives in `/opt/homebrew/share/android-commandlinetools`
-  (pre-existing); emulator + platform-tools + the API 36 system image were
-  added 2026-07-05. Dev tooling (JDK, OpenTofu, supabase CLI) lives in the
-  `dreamapp_env` conda env.
+Debug builds accept `http://`; release builds only `https://`. On iOS, streaming rehearsal audio from an `http://` server that is neither `localhost` nor an IP address can fail under App Transport Security; "Save offline" still works. `--dart-define=DEFAULT_SERVER_URL=http://10.0.2.2:8001` presets the address and connects on a fresh install.
+
+## The live smoke test
+
+`apps/app/integration_test/live_smoke_test.dart` drives the real app against a real server: sign-in, consent, one chat turn with a streamed reply. It calls your model provider, so it is not part of CI.
+
+```bash
+cd apps/app
+fvm flutter test integration_test/live_smoke_test.dart -d <device> \
+  --dart-define=DEFAULT_SERVER_URL=http://10.0.2.2:8001 \
+  --dart-define=SMOKE_EMAIL=you@example.org --dart-define=SMOKE_PASSWORD=...
+```
+
+## Live checks of the prompts
+
+Prompt or model changes are checked against the real provider with the two evals in `apps/server/evals` (see [SELF_HOSTING.md](SELF_HOSTING.md#models)): the crisis check on fixed cases, and the rewriting stage's opener and the summary→final routing.

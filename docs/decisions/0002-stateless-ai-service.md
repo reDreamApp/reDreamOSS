@@ -31,3 +31,7 @@ The AI service is stateless. Every `POST /chat` request carries the full convers
 ## Alternatives considered
 - **Keep in-memory cache, refresh from backend on miss**: still requires sync, still loses state on restart, just adds a cache layer.
 - **Move state to Redis**: introduces a new service for marginal gain. Postgres already stores it.
+
+## Amendment (2026-10-23) — reDreamOSS: in-process
+
+The AI side is no longer a separate service: it runs in the server's process and the API calls it through `InProcessAiClient` (ADR 0013), so there is no `POST /chat` over HTTP at all. The decision stands as written for the function boundary: every chat call carries the full history from Postgres, and the AI side keeps nothing between calls. `session_id` is no longer used for tracing (Langfuse is gone).

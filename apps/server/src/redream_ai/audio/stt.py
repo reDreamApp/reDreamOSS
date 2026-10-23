@@ -1,4 +1,4 @@
-"""STT — transcribe dream voice journals (ADR 0010).
+"""STT — transcribe dream voice journals (ADR 0013).
 
 One provider, from configuration: a multipart ``POST
 {STT_BASE_URL}/audio/transcriptions`` with ``model``, ``file`` and, when the

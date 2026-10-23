@@ -48,3 +48,10 @@ response: {
 - **No detection (legacy)**: rejected — ethical and legal exposure.
 - **Hosted hate-speech / safety API**: cheaper but ties us to a third-party processor outside the EU. Mistral is EU-resident.
 - **Heuristic keyword list**: dramatically worse recall + accent/idiom sensitivity.
+
+## Amendment (2026-10-23) — reDreamOSS
+
+- The check is an in-process function (`InProcessAiClient.safety_classify`; the provider call times out after `LLM_SAFETY_TIMEOUT_SECONDS`, default 20 s), no longer `POST /safety/classify`. Its model is `LLM_SAFETY_MODEL` (default `LLM_SMALL_MODEL`) at the operator's provider, with no fallback: a failed check fails the chat turn and removes the just-saved message, it never lets the message through unchecked.
+- The `safety_events` table is gone. A flagged message keeps `safety_flagged`; the server logs one line without chat id or content.
+- The helpline text is configuration (`HELPLINE_TEXT_EN` / `_DE`, `HELPLINE_PROMPT_EN` / `_DE`) with a neutral default (local emergency number and findahelpline.com) instead of fixed German and English numbers; operators set their users' country's services.
+- `SAFETY_CLASSIFIER_ENABLED` stays (default on, a warning when off): the classifier is not perfect, and operators testing models need to switch it off deliberately rather than by editing code.

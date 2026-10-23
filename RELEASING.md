@@ -1,62 +1,55 @@
 # Releasing
 
-Decided 2026-07-02. Two long-lived branches, one release gate:
+`main` is the only long-lived branch; CI proves every push (server tests and lint, the Postgres schema from zero on Postgres 17 against the ORM models, the compose stack built and started with a login, the Flutter analyzer and tests). A release is a version tag on a commit of `main`: `vMAJOR.MINOR.PATCH`.
 
-- **`main`** — development. Any Postgres 16+ serves as the dev database
-  (`make db-migrate` applies `apps/server/migrations/` to `DATABASE_URL`).
-  CI's `postgres-schema` job proves every push applies the migrations cleanly
-  from zero on Postgres 17 and that they match the ORM models; its `stack`
-  job builds and starts `compose.yaml` and logs in against it. Pushing main
-  never deploys anything.
-- **`production`** — the release gate: what operators run. Nothing deploys
-  automatically; on the box, an operator updates with
-  `git pull` (on `production`) and `make update` (`docker compose pull
-  --ignore-buildable`, `docker compose build --pull`, `docker compose up -d
-  --wait`: without the pulls, Postgres, Caddy and the Python base image stay
-  on whatever version the box first fetched). The server
-  container **applies pending migrations before it starts**
-  (`python -m redream_api.db.migrate`; a failed migration stops it). Code and
-  schema travel in the same image, so the API can never start against a
-  database missing its migration.
+- **The app**: pushing the tag runs `.github/workflows/release-apk.yml`. It refuses a tag whose commit is not on `main`, analyzes and tests the app, builds a release APK signed with the project's upload key (version name from the tag, version code derived from it: 1.2.3 → 1002003; `pubspec.yaml`'s version is not used) and attaches it, with its SHA-256, to a GitHub Release. One APK serves every server.
+- **The server**: operators update with `git pull` and `make update`; the server container applies pending migrations before it starts (a failed migration stops it), so code and schema always match.
+
+## Order of changes
+
+The app checks the server's `GET /api/v1/instance` when people connect: `api_version` and `consent_version` must match its own.
+
+- **A breaking API change** (a removed or renamed field or route, a changed meaning): bump `API_VERSION` in `apps/server/src/redream_api/api/v1/instance/routes.py` and `appApiVersion` in `apps/app/lib/core/server/server_config.dart` together. Prefer additive changes; they need no bump.
+- **A consent-text change**: the version is a code constant on each side, `redream_api.core.consent.CONSENT_VERSION` and `consentTextVersion` in `apps/app/lib/features/consent/consent_service.dart`; a server test keeps them equal. Bump both, and only on a material change to the consent copy (a new kind of data, purpose or recipient): everyone consents again.
+- Either way: **servers first, then the app**. Say so in the release notes, so operators update before people install the new APK. An app that is newer than its server tells people the server needs an update; it cannot work around it.
 
 ## How a schema change ships
 
-1. Add the next numbered file, `apps/server/migrations/000N_feature_x.sql`
-   (plain SQL without BEGIN/COMMIT: the runner applies each file and its
-   `schema_migrations` row in one transaction), and change the ORM models to
-   match, in the same commit. Never edit a file that has been applied
-   anywhere: the runner refuses one whose checksum changed.
-2. Check locally: `make db-migrate`, then `make db-test` with
-   `TEST_DATABASE_URL` pointing at an empty, throwaway database (runner,
-   schema drift against the ORM, smoke test on the migrated schema).
-3. Merge to `main` → CI's `postgres-schema` job re-proves both from zero.
-4. Release: fast-forward `production` to main and push:
-   `git push origin main:production`
-   → on each box, `git pull` and `make update` rebuild the server; it
-   migrates the database as it starts.
+1. Add the next numbered file, `apps/server/migrations/000N_feature_x.sql` (plain SQL without BEGIN/COMMIT: the runner applies each file and its `schema_migrations` row in one transaction), and change the ORM models to match, in the same commit. Never edit a file that was applied anywhere: the runner refuses one whose checksum changed.
+2. Check locally: `make db-migrate`, then `make db-test` with `TEST_DATABASE_URL` pointing at an empty, throwaway database.
+3. Merge to `main`; CI's `postgres-schema` job re-proves it from zero.
 
-## Consent-text change
+The default server tests build their tables from the ORM models on SQLite, so on their own they never see a model change without its migration (or the reverse); `tests/pg` does.
 
-The consent version is a code constant on each side:
-`redream_api.core.consent.CONSENT_VERSION` (server) and `consentTextVersion`
-in `apps/app/lib/features/consent/consent_service.dart` (app); a test keeps
-them equal. Bump both together, and only on a material change to the consent
-copy (a new processor or purpose): every user then consents again. **Deploy
-the server before the app**: an old server refuses grants from an app that
-sends the new version.
+## Cutting a release
 
-## One-time setup
+```bash
+git switch main && git pull
+git tag -a v1.2.0 -m "reDreamOSS 1.2.0"
+git push origin v1.2.0
+```
 
-- A box: see "Run it" in [README.md](README.md) (`scripts/init-env.sh`,
-  `docker compose up -d --build --wait`, the first user with the CLI). Updates need
-  no database access of their own: the server container migrates the
-  database it is configured with.
-- [ ] Create the branch: `git branch production && git push origin production`.
+Then edit the release's notes on GitHub: what changed for people, what changed for operators (new settings, the update order above).
 
-## Caveats
+## One-time: repository settings
 
-- The default `apps/server` tests build their tables from the ORM models on
-  SQLite, so on their own they never see a model change without its
-  migration (or the reverse). `tests/pg` (CI's `postgres-schema` job) does:
-  it compares the migrated Postgres with the models. Both belong in the same
-  commit.
+- **Private vulnerability reporting** (Settings → Code security): on, so SECURITY.md's "Report a vulnerability" exists.
+- **Tag protection**: a ruleset for tags `v*` that only maintainers may create. The workflow signs only tags whose commit is on `main`, but anyone who can push a tag can start it.
+- **Optional, stronger**: move the four secrets below into an environment `release` with required reviewers and add `environment: release` to the job, so every signed build waits for an approval.
+
+## One-time: the signing key
+
+The release workflow needs four repository secrets. Create the upload key once, on your own machine:
+
+```bash
+keytool -genkeypair -v -keystore upload-keystore.jks -alias upload \
+  -keyalg RSA -keysize 4096 -validity 10000
+base64 -i upload-keystore.jks | gh secret set ANDROID_KEYSTORE_BASE64 --repo reDreamApp/reDreamOSS
+gh secret set ANDROID_KEYSTORE_PASSWORD --repo reDreamApp/reDreamOSS
+gh secret set ANDROID_KEY_ALIAS --repo reDreamApp/reDreamOSS --body upload
+gh secret set ANDROID_KEY_PASSWORD --repo reDreamApp/reDreamOSS
+```
+
+(`gh secret set` without `--body` asks for the value. keytool's default PKCS12 keystore has one password: `ANDROID_KEY_PASSWORD` is the same value as `ANDROID_KEYSTORE_PASSWORD`.) Keep `upload-keystore.jks` and its passwords in two safe places, offline: an APK signed with another key cannot update an installed one, so a lost key means everyone uninstalls (and loses the app's local data) to get the next version. Delete the copy from the working directory; `*.jks` and `key.properties` are gitignored, but nothing else protects them.
+
+Locally, `android/key.properties` (`storeFile` relative to `android/app`, `storePassword`, `keyAlias`, `keyPassword`) makes `fvm flutter build apk --release` sign with that key; without it a release build is signed with the debug key and is for your own devices only.

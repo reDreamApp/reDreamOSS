@@ -1,4 +1,4 @@
-"""POST /api/v1/audio/transcribe — voice journaling proxy (ADR 0010).
+"""POST /api/v1/audio/transcribe — voice journaling proxy (ADR 0013).
 
 The FakeAiClient has speech off; `voice_on` switches it on.
 """

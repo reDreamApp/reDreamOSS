@@ -1,7 +1,7 @@
 [project]
 name = "redream-server"
 version = "0.1.0"
-description = "reDreamAI server — FastAPI backend + IRT chatbot, crisis classifier, Voxtral audio."
+description = "reDreamOSS server — FastAPI backend, guided dream-rewriting chat, crisis check, optional speech."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

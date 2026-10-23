@@ -70,9 +70,9 @@ Map<String, String> _texts(String lang) {
   };
 }
 
-/// The microphone texts the system shows (English only).
+/// The microphone text iOS shows (English only).
 Map<String, String> _plistTexts() => {
-  for (final path in ['ios/Runner/Info.plist', 'macos/Runner/Info.plist'])
+  for (final path in ['ios/Runner/Info.plist'])
     path: RegExp(
       r'<key>NSMicrophoneUsageDescription</key>\s*<string>([^<]*)</string>',
     ).firstMatch(File(path).readAsStringSync())![1]!,
@@ -114,7 +114,7 @@ void main() {
 
   test('the microphone texts follow the same rules', () {
     final texts = _plistTexts();
-    expect(texts, hasLength(2));
+    expect(texts, hasLength(1));
     expect(_claimHits(texts, 'en'), isEmpty);
     expect(texts.values.where(_operatorBound.hasMatch), isEmpty);
   });

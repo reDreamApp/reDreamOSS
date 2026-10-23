@@ -23,6 +23,8 @@ LOCAL_COMMAND_DOCS = [
     ENV_EXAMPLE,
     REPO_ROOT / "README.md",
     REPO_ROOT / "RELEASING.md",
+    REPO_ROOT / "docs" / "SELF_HOSTING.md",
+    REPO_ROOT / "docs" / "LOCAL_TESTING.md",
     SERVER_DIR / "README.md",
     *sorted((SERVER_DIR / "src").rglob("*.py")),
     *sorted((SERVER_DIR / "evals").rglob("*.py")),

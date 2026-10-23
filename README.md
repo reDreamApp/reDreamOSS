@@ -1,92 +1,74 @@
-# reDreamAI
+# reDreamOSS
 
-A self-help companion app for working with difficult dreams: record a dream, reimagine it with a new ending, and listen back to it. *reDreamAI does not diagnose or treat any condition. If nightmares are seriously distressing you, please talk to a doctor or psychotherapist.*
+A self-help companion app for working with difficult dreams: record a dream, rewrite it with a new ending together with an AI guide, and rehearse it — by reading or by listening. You run the server; anyone you invite uses the app with it. *reDreamOSS does not diagnose or treat any condition. If nightmares are seriously distressing you, please talk to a doctor or psychotherapist.*
+
+reDreamOSS is the open, self-hostable version of [reDreamAI](https://github.com/reDreamApp/reDreamAI): one small server instead of a hosted platform, any OpenAI-compatible model provider, and one Android app that works with every server ([ADR 0013](docs/decisions/0013-origin-of-redreamoss.md)).
+
+## How it fits together
+
+```
+Android / iOS app ──HTTPS──► server (one container) ──► your model provider (OpenAI-compatible)
+  asks for the server         login · chats · dreams       chat, crisis check, optional
+  address once                consent · crisis check       speech-to-text and text-to-speech
+                              rehearsal MP3s on a volume
+                              Postgres (second container), optional Caddy for HTTPS
+```
+
+- **Run a server:** [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md). A Linux box with Docker, a model provider's API key, about fifteen minutes.
+- **Use the app:** install the APK from the [latest release](https://github.com/reDreamApp/reDreamOSS/releases/latest), enter the server address you were given, sign up with the invite code. Release builds only talk https.
+- **Work on the code:** [docs/LOCAL_TESTING.md](docs/LOCAL_TESTING.md), then [RELEASING.md](RELEASING.md).
 
 ## Repository layout
 
 ```
 apps/
-  server/    Python FastAPI, one process: redream_api (async SQLAlchemy, source of truth for users, chats, dreams) + redream_ai (chat, safety classifier, TTS, STT), called in-process
-    migrations/  the Postgres schema as numbered SQL files, applied by the server container at start
-  app/       Flutter (version pinned in apps/app/.fvmrc): iOS + Android client, EN + DE
+  server/      Python FastAPI, one process: redream_api (users, chats, dreams, consent; source of truth)
+               + redream_ai (guided chat, crisis check, speech), called in-process
+    migrations/  the Postgres schema as numbered SQL files, applied by the server at start
+  app/         Flutter (version pinned in apps/app/.fvmrc): Android + iOS client, EN + DE
 
-compose.yaml    the whole stack on one box: Postgres + the server, optional Caddy (profile "caddy")
-.env.example    every server setting, documented; scripts/init-env.sh turns it into .env
-deploy/
-  Caddyfile     HTTPS reverse proxy for the caddy profile
-scripts/
-  init-env.sh   creates .env with a database password and an invite code
-
-docs/
-  decisions/    Architecture Decision Records (binding)
+compose.yaml   the whole stack on one box: Postgres + the server, optional Caddy (profile "caddy")
+.env.example   every server setting, documented; scripts/init-env.sh turns it into .env
+deploy/        Caddyfile for the caddy profile
+scripts/       init-env.sh: creates .env with a database password and an invite code
+docs/          self-hosting, local testing, roadmap, decisions/ (ADRs)
 ```
 
-## Runtime flow
-
-```
-Flutter app
-   ↓ HTTPS + SSE (Caddy)
-apps/server  redream_api ← source of truth (chats, dreams, safety events, daily mood)
-   ↓ in-process
-             redream_ai  ← stateless: receives full history, returns next IRT stage + response
-   ↓
-Scaleway Generative APIs (chat, speech-to-text), Mistral (fallback, text-to-speech)
-```
-
-## Run it
-
-The server and its Postgres run with Docker Compose on one small box:
+## Quick start (server)
 
 ```bash
-sh scripts/init-env.sh     # .env from .env.example, with a database password and an invite code
-# fill in LLM_BASE_URL, LLM_API_KEY, LLM_MODEL and LLM_SMALL_MODEL in .env
+git clone https://github.com/reDreamApp/reDreamOSS && cd reDreamOSS
+sh scripts/init-env.sh     # .env with a database password and an invite code (printed)
+# set LLM_BASE_URL, LLM_API_KEY, LLM_MODEL and LLM_SMALL_MODEL in .env
 docker compose up -d --build --wait
-docker compose exec server python -m redream_api.cli create-user you@example.org
 ```
 
-The server then listens on `127.0.0.1:8000` only (`SERVER_PORT` changes the
-port): reach it through an HTTP tunnel or your own reverse proxy that sends
-`X-Forwarded-For` (set or appended; the rate limits count the address in it,
-and without it they count every client as one).
-For HTTPS straight from the box, set `DOMAIN` and `COMPOSE_PROFILES=caddy` in
-`.env` (DNS pointing straight at the box, ports 80 and 443 open) and run the
-same `docker compose up -d --build --wait`: Caddy starts with it. People sign
-up in the app with the invite code `init-env.sh` printed (`REGISTRATION_MODE`,
-`INVITE_CODE`); every setting is documented in [`.env.example`](.env.example).
-
-Update with `git pull` and `make update` (pulls newer `postgres:17` and
-`caddy:2` images, rebuilds the server on a fresh base image, restarts; the
-server migrates the database as it starts). Back up the database with
-`docker compose exec -T db pg_dump -U redream redream > redream.sql`; the
-rehearsal MP3s are in the `redream_audio` volume. `make init-env`, `make up`,
-`make down`, `make logs` and `make create-user EMAIL=…` are shortcuts.
+The server listens on `127.0.0.1:8000`; put HTTPS in front of it (Caddy, a tunnel or your proxy) as [SELF_HOSTING.md](docs/SELF_HOSTING.md) explains, and read its section on your duties as the operator before you invite anyone.
 
 ## Development
 
 ```bash
 make help                  # list everything
 make db-migrate            # apply apps/server/migrations to DATABASE_URL (Postgres 16+; settings from .env)
-make api-dev               # run the server (backend + AI) on :8001
+make api-dev               # run the server locally on :8001
 make app-run               # flutter run via FVM; the app asks for the server address on first start
-make test                  # all test suites
+make test                  # every test suite
 ```
 
 ## Decisions
 
-Binding architectural decisions live in [`docs/decisions/`](docs/decisions/README.md). Read those before making structural changes.
+Binding architectural decisions live in [`docs/decisions/`](docs/decisions/README.md). Key invariants:
 
-Key invariants:
 - One plain Postgres (16+). Its schema is `apps/server/migrations/*.sql`, applied by `python -m redream_api.db.migrate` before the server starts; the ORM models must match it (CI checks).
-- AI service is stateless — every request carries the full conversation history.
-- Structured outputs (JSON mode) for the summary. No string-matching parsers.
-- Self-help framing, never therapy. Disclaimer copy required on user-facing surfaces.
-- Crisis detection runs before every IRT turn; high-risk input bypasses the LLM.
-- 100k LLM tokens / user / day, 500k / day for all users together (UTC reset).
+- One server process; the AI side is stateless and in-process — every turn carries the full conversation.
+- Structured output (JSON mode) for the dream summary. No string-matching of model prose.
+- Self-help framing, never therapy (ADR 0004); `apps/app/test/wording_test.dart` checks every user-facing text.
+- The crisis check runs before every guided turn; a flagged message gets the helpline text, not the model.
 - Streaming chat end-to-end via SSE.
-- Pinned model IDs — no floating aliases (one recorded exception, ADR 0010).
+- Cost guard: invite-only sign-up by default and a per-user daily request cap (`DAILY_AI_REQUESTS_PER_USER`, default 100); set a spend limit at your provider too.
 
 ## License
 
 Copyright 2026 Daniel Menzel, Katharina Lüth and Ramon Zacharias.
 
-Licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+Licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE). Report security problems privately: [SECURITY.md](SECURITY.md).

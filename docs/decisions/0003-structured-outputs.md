@@ -42,3 +42,7 @@ The structured-output requirement **remains in force for the summary stage**: th
 core's summary prose gets a JSON-mode extraction pass
 (`apps/ai/src/redream_ai/summary_structured.py`) that fills `ChatResponse.structured`.
 The `_parse_summary` ban is untouched — no string-matching of LLM prose, anywhere.
+
+## Amendment (2026-10-23) — reDreamOSS: any provider
+
+The code moved to `apps/server/src/redream_ai/` (`core/irt_app.py`, `summary_structured.py`). JSON mode is requested from whatever OpenAI-compatible provider the operator configures (`LLM_JSON_MODE`, default on; off for endpoints without `response_format`). The summary extraction and the crisis check both read the answer with `redream_ai/llm/json_parse.parse_json_object`, which skips code fences, prose and `<think>` blocks and accepts exactly one JSON object, otherwise raises. A failed summary extraction leaves `structured` empty: the prose is still shown, but no journal entry is created from that summary. A failed crisis check fails the turn. The ban on string-matching model prose is unchanged.

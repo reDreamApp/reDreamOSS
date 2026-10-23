@@ -42,3 +42,7 @@ proxy `POST /chats/{id}/message/stream` (apps/api) forwards content deltas to th
 Flutter client and persists the turn from the final frame; the Flutter client consumes
 the proxy's frames (`ChatState.send` streaming path). All three layers are implemented
 — frame-shape changes are breaking cross-service changes.
+
+## Amendment (2026-10-23) — reDreamOSS: one process
+
+The stream no longer crosses a service boundary: `POST /api/v1/chats/{id}/message/stream` iterates the in-process AI stream (`InProcessAiClient`, closed with `aclosing` at every layer when the client goes away) and forwards content deltas to the app. The frame contract is the one in `apps/server/src/redream_ai/api/chat.py`. Caddy (optional) and tunnels pass SSE through unbuffered; operators with their own proxy must turn response buffering off (`docs/SELF_HOSTING.md`).

@@ -22,7 +22,7 @@ The app asks for its server's address on first start and checks it with
 `GET /api/v1/instance` (same API and consent version as the app, or it says
 which side needs an update). One build works with every server; release
 builds accept `https://` only. A local server is `http://localhost:8001`
-(iOS simulator / desktop) or `http://10.0.2.2:8001` (Android emulator); type
+(iOS simulator) or `http://10.0.2.2:8001` (Android emulator); type
 the `http://`, since an address without a scheme is taken as `https://`. An
 operator's own build can preset the address, which is then tried without
 asking: `fvm flutter build apk --dart-define=DEFAULT_SERVER_URL=https://dreams.example.org`.

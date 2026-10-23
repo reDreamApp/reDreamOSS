@@ -1,4 +1,4 @@
-"""transcribe + rehearsal_generate — STT/TTS (ADR 0010).
+"""transcribe + rehearsal_generate — STT/TTS (ADR 0013).
 
 Both raise LlmUnavailableError while their half of speech is off
 (`settings.stt_enabled` / `settings.tts_enabled`); the backend checks those

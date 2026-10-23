@@ -1,4 +1,4 @@
-"""POST /audio/transcribe — dream voice journaling (ADR 0010).
+"""POST /audio/transcribe — dream voice journaling (ADR 0013).
 GET (and HEAD) /audio/files/{key} — rehearsal MP3s, behind a signed link.
 
 Transcribe hands the upload to redream_ai's STT (the STT_* provider). The
