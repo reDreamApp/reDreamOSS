@@ -111,8 +111,8 @@
   "onboardingScienceBody": "A routine inspired by imagery-rehearsal techniques. reDreamOSS itself is not therapy and does not treat any condition.",
   "onboardingAiTitle": "AI-guided sessions",
   "onboardingAiBody": "reDreamOSS uses advanced AI to guide you through each session:\n1) Record your nightmare\n2) Rewrite it with a happy ending\n3) Rehearse the new version",
-  "onboardingPrivacyTitle": "Your dreams are private",
-  "onboardingPrivacyBody": "Your journal is kept on the server you connect to, run by whoever gave you its address. On your phone, saved dreams are encrypted.",
+  "onboardingPrivacyTitle": "Where your dreams are kept",
+  "onboardingPrivacyBody": "Your journal is kept on the server you connect to, and whoever runs that server can read it. On this device, saved dreams and rehearsal audio are encrypted.",
   "onboardingProfileTitle": "Help us get to know you better",
   "onboardingProfileHint": "All answers are optional.",
   "onboardingSubmit": "Get started",
@@ -176,7 +176,7 @@
   "chatInputHint2": "Start redreaming…",
   "chatInputHint3": "Tell me your dream…",
   "chatSend": "Send",
-  "chatWelcome": "Hello! I'm here to help you rewrite difficult dreams. This is a safe space where we can work together to turn nightmares into new stories!",
+  "chatWelcome": "Hello! I'm here to help you rewrite difficult dreams. Let's turn them into new stories together!",
   "chatWelcome2": "Hi! Nice to see you. Tell me about a dream that troubles you, and we'll give it a new ending together!",
   "chatWelcome3": "Welcome! Here we can take a difficult dream and write it a better story together!",
   "chatLoading": "Loading chat…",
@@ -498,8 +498,8 @@
   "chatStartNewSession": "Start new session",
   "consentTitle": "Your data, your consent",
   "consentIntro": "reDreamOSS helps you work through distressing dreams. To do that, it processes what you share about your dreams and how you feel — information about your health. Data-protection laws such as the EU's GDPR (Art. 9) require your explicit consent for this.",
-  "consentBulletData": "What is processed: your dream descriptions and voice recordings (turned into text; the server does not keep the audio), rewritten dreams, intensity ratings, and mood entries.",
-  "consentBulletProcessors": "Who processes it: the server you connected to ({server}) stores it and sends your texts and recordings to the AI service its operator chose, to write replies, transcribe speech and create audio. The operator's privacy policy names that service and how long it keeps data.",
+  "consentBulletData": "What is processed: your chats and dream descriptions, voice recordings (turned into text; the server does not keep the recording), rewritten dreams and their rehearsal audio, intensity ratings, mood entries, and the profile answers you give.",
+  "consentBulletProcessors": "Who processes it: the server you connected to ({server}) stores it, and whoever runs that server can read it. It sends your texts and recordings to the AI services its operator chose, to write replies, transcribe speech and create audio. Ask the operator which services these are and how long they keep data.",
   "@consentBulletProcessors": {
     "placeholders": {
       "server": {

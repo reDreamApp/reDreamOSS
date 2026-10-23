@@ -4,26 +4,46 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 /// User-facing texts follow the self-help framing (ADR 0004): no therapy or
-/// treatment claims, no conditions named, and nothing that ties a
-/// self-hosted server to one operator or AI provider.
+/// treatment claims, no effect promises, no conditions named, and nothing
+/// that ties a self-hosted server to one operator or AI provider.
 
-/// Words that make a medical claim or name a condition.
+/// Medical claims, effect promises and named conditions. German compounds
+/// ("Psychotherapie", "Angststörung", "geheilt") match without a leading
+/// word boundary; "Trauma" stays whole-word, "Traum" is the app's subject.
 final _claims = {
   'en': RegExp(
-    r'\b(therap\w*|treat\w*|cure[sd]?|heal(s|ed|ing)?|clinical\w*|diagnos\w*|'
-    r'ptsd|trauma\w*|disorder\w*|insomnia|symptom\w*|patient\w*)\b',
+    r'\b(therap\w*|treat\w*|cure[sd]?|heal(s|ed|ing)?|clinical\w*|'
+    r'diagnos\w*|ptsd|trauma\w*|disorder\w*|insomnia|symptom\w*|'
+    r'patient\w*|reduc\w*|reliev\w*|alleviat\w*|proven|effective\w*|'
+    r'efficacy|detect\w*|monitor\w*|irt|sleep (better|calm\w*))\b',
     caseSensitive: false,
   ),
   'de': RegExp(
-    r'\b(therap\w*|behandel\w*|behandlung\w*|heil(t|en|ung)|klinisch\w*|'
-    r'diagnos\w*|ptbs|trauma\w*|störung\w*|schlafstörung\w*|symptom\w*|'
-    r'patient\w*)\b',
+    '(therap|störung|behandl|heilt|heilung|geheilt|klinisch|diagnos|'
+    'ptbs|symptom|patient|linder|reduzier|wirksam|nachgewiesen|'
+    'erkennt|überwach|schlaflos|insomnie|wieder ruhig schl)|'
+    r'\btrauma(ta|tisch\w*)?\b',
+    caseSensitive: false,
+    unicode: true,
+  ),
+};
+
+/// The disclaimers say what the app is NOT; exactly these phrases are
+/// taken out before checking, the rest of the sentence is checked too.
+final _negations = {
+  'en': RegExp(
+    'is not therapy|does not (diagnose or )?treat any condition|'
+    'a doctor or psychotherapist',
+    caseSensitive: false,
+  ),
+  'de': RegExp(
+    'keine Therapie|(diagnostiziert und )?behandelt keine Erkrankung(en)?|'
+    'psychotherapeutischen Fachperson',
     caseSensitive: false,
   ),
 };
 
-/// The disclaimers say what the app is NOT ("not therapy", "does not
-/// diagnose or treat"); those words are allowed there and nowhere else.
+/// Where the disclaimers live; they must keep saying "not".
 const _disclaimers = {
   'settingsTagline',
   'onboardingScienceBody',
@@ -33,8 +53,11 @@ const _disclaimers = {
 /// Names and claims that belong to one deployment, not to every server.
 final _operatorBound = RegExp(
   'scaleway|mistral|langfuse|supabase|openai|redreamai|info@|osnabrück|'
-  'gdpr.compliant|dsgvo.konform|european services|europäische dienste',
+  'gdpr.compliant|dsgvo.konform|european services|europäische dienste|'
+  r'\bour (study|servers?)\b|\bunsere (studie|server)\b|france|frankreich|'
+  r'\b30 (days|tage)\b',
   caseSensitive: false,
+  unicode: true,
 );
 
 Map<String, String> _texts(String lang) {
@@ -47,29 +70,35 @@ Map<String, String> _texts(String lang) {
   };
 }
 
+/// The microphone texts the system shows (English only).
+Map<String, String> _plistTexts() => {
+  for (final path in ['ios/Runner/Info.plist', 'macos/Runner/Info.plist'])
+    path: RegExp(
+      r'<key>NSMicrophoneUsageDescription</key>\s*<string>([^<]*)</string>',
+    ).firstMatch(File(path).readAsStringSync())![1]!,
+};
+
+List<String> _claimHits(Map<String, String> texts, String lang) => [
+  for (final MapEntry(:key, :value) in texts.entries)
+    for (final m in _claims[lang]!.allMatches(
+      value.replaceAll(_negations[lang]!, ''),
+    ))
+      '$key: "${m[0]}"',
+];
+
 void main() {
   for (final lang in ['en', 'de']) {
     group(lang, () {
       final texts = _texts(lang);
 
-      test('no therapy or treatment claims outside the disclaimers', () {
-        final hits = [
-          for (final MapEntry(:key, :value) in texts.entries)
-            if (!_disclaimers.contains(key))
-              for (final m in _claims[lang]!.allMatches(value))
-                '$key: "${m[0]}"',
-        ];
-        expect(hits, isEmpty);
+      test('no therapy, treatment or effect claims', () {
+        expect(_claimHits(texts, lang), isEmpty);
       });
 
       test('the disclaimers say "not", and still exist', () {
         for (final key in _disclaimers) {
           expect(texts[key], isNotNull, reason: key);
-          expect(
-            texts[key],
-            matches(RegExp(r'\b(not|keine?)\b', caseSensitive: false)),
-            reason: key,
-          );
+          expect(texts[key], matches(_negations[lang]!), reason: key);
         }
       });
 
@@ -82,4 +111,28 @@ void main() {
       });
     });
   }
+
+  test('the microphone texts follow the same rules', () {
+    final texts = _plistTexts();
+    expect(texts, hasLength(2));
+    expect(_claimHits(texts, 'en'), isEmpty);
+    expect(texts.values.where(_operatorBound.hasMatch), isEmpty);
+  });
+
+  test('the checks catch what they are for', () {
+    expect(
+      _claimHits({'k': 'Reduces nightmares, clinically proven'}, 'en'),
+      hasLength(3),
+    );
+    expect(
+      _claimHits({'k': 'Hilft bei Angststörung und Psychotherapie'}, 'de'),
+      hasLength(2),
+    );
+    expect(_claimHits({'k': 'Traumanalyse und Traumarbeit'}, 'de'), isEmpty);
+    expect(
+      _claimHits({'k': 'reDreamOSS is not therapy but helps with PTSD'}, 'en'),
+      ['k: "PTSD"'],
+    );
+    expect(_operatorBound.hasMatch('Unsere Server in Frankreich'), isTrue);
+  });
 }
