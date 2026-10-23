@@ -1,1 +1,1 @@
-"""Core utilities: config, logging, JWT verification, FastAPI dependencies."""
+"""Core utilities: config, logging, passwords, rate limits, FastAPI dependencies."""

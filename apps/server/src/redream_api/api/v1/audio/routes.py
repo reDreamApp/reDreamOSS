@@ -7,7 +7,8 @@ and the audio bytes are discarded after transcription.
 
 While speech input is off (no STT_MODEL), the route answers 503
 ``voice_unavailable`` — after the consent gate, so a user without consent
-still gets 403 ``consent_required`` first.
+still gets 403 ``consent_required`` first. A transcription that reaches the
+provider counts against DAILY_AI_REQUESTS_PER_USER (429 over it).
 
 The file route takes no auth header and no consent check: audio players send
 neither. The link's signature (services/audio_links) is the authorization;
@@ -25,7 +26,9 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
-from ....core.dependencies import require_consent
+from ....core.dependencies import get_current_user, require_consent
+from ....core.limits import count_ai_request
+from ....db.models.user import User
 from ....services import audio_links
 from ....services.ai_client import (
     VOICE_UNAVAILABLE,
@@ -52,6 +55,7 @@ MAX_AUDIO_BYTES = 25 * 1024 * 1024
 )
 async def transcribe(
     file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
     ai: BaseAiClient = Depends(get_ai_client),
 ) -> TranscribeOut:
     if not ai.stt_enabled:
@@ -66,6 +70,8 @@ async def transcribe(
             f"audio exceeds {MAX_AUDIO_BYTES // (1024 * 1024)} MB",
         )
 
+    # Daily cap: counted here, before the provider call (a failed one counts).
+    count_ai_request(user.id)
     try:
         result = await ai.transcribe(file_name=file.filename, audio_bytes=audio_bytes)
     except AIServiceError as exc:

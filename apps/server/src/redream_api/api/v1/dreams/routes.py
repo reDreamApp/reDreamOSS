@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from ....core.dependencies import get_current_user, get_db, require_consent
+from ....core.limits import count_ai_request
 from ....db.models.dream import Dream
 from ....db.models.user import User
 from ....db.repositories.dream_repo import DreamRepo
@@ -220,6 +221,9 @@ async def generate_rehearsal(
     # before any AI call.
     if not ai.tts_enabled:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, VOICE_UNAVAILABLE)
+    # Daily cap: only a rendering counts (cache hits and 503s above are free),
+    # at admission — a rendering that fails still counts.
+    count_ai_request(user.id)
 
     # Rendering takes long; the dream or account may be deleted (or the text
     # edited) meanwhile. Then the file just written must go too.

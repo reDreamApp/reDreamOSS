@@ -45,6 +45,10 @@ os.environ["LLM_REASONING_EXTRA_TOKENS"] = "2048"
 # A local .env may set an operator's helpline reference; tests use the defaults.
 os.environ["HELPLINE_PROMPT_EN"] = ""
 os.environ["HELPLINE_PROMPT_DE"] = ""
+# redream_api's settings (loaded when a test imports it) refuse invite mode
+# without a code; a local .env may choose another mode.
+os.environ["REGISTRATION_MODE"] = "invite"
+os.environ["INVITE_CODE"] = "test-invite-code"
 
 import pytest
 

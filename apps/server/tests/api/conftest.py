@@ -1,7 +1,8 @@
 """pytest fixtures for the backend.
 
 Per-test SQLite file under /tmp, dependency-overrides for `get_db`,
-`get_current_user`, and `get_ai_client`. No live Supabase, no live AI.
+`get_current_user`, and `get_ai_client`. No live AI. `auth_client` leaves
+`get_current_user` real: requests carry bearer tokens from /auth/login.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -50,11 +52,17 @@ os.environ["HELPLINE_TEXT_EN"] = ""
 os.environ["HELPLINE_TEXT_DE"] = ""
 os.environ["HELPLINE_PROMPT_EN"] = ""
 os.environ["HELPLINE_PROMPT_DE"] = ""
+# Registration as shipped (invite); a local .env may choose another mode.
+os.environ["REGISTRATION_MODE"] = "invite"
+os.environ["INVITE_CODE"] = "test-invite-code"
+os.environ["DAILY_AI_REQUESTS_PER_USER"] = "100"
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from redream_api.core import limits
 from redream_api.core.config import settings
 from redream_api.core.dependencies import get_current_user, get_db
 from redream_api.db import models as _models  # noqa: F401 — register tables
@@ -63,6 +71,11 @@ from redream_api.db.models.user import User
 from redream_api.db.models.user_consent import UserConsent
 from redream_api.main import app
 from redream_api.services.ai_client import get_ai_client
+
+
+# A password_hash no password verifies against: fake users sign in through
+# the get_current_user override, never with a password.
+NO_PASSWORD = "!"
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +209,15 @@ async def db_path() -> AsyncIterator[Path]:
 @pytest.fixture
 async def db_engine(db_path: Path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", echo=False)
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _foreign_keys(dbapi_connection, _record) -> None:
+        # ON DELETE CASCADE as on Postgres: SQLite enforces foreign keys only
+        # when asked, per connection.
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     try:
@@ -220,7 +242,7 @@ async def fake_user(db_session_maker) -> User:
     """A user WITH current Art. 9 consent granted — the normal state for
     every feature test. Consent-gating tests use `fake_user_no_consent`."""
     async with db_session_maker() as session:
-        user = User(id=uuid4(), email="test@example.com")
+        user = User(id=uuid4(), email="test@example.com", password_hash=NO_PASSWORD)
         session.add(user)
         session.add(
             UserConsent(
@@ -232,6 +254,23 @@ async def fake_user(db_session_maker) -> User:
         await session.commit()
         await session.refresh(user)
     return user
+
+
+@pytest.fixture(autouse=True)
+def _fresh_limits() -> None:
+    """Every test starts with no rate-limit or daily-cap counts (core/limits)."""
+    limits.reset()
+
+
+@pytest.fixture
+def day(monkeypatch: pytest.MonkeyPatch):
+    """The daily cap's clock, two hours before UTC midnight; movable."""
+
+    class Day:
+        now = datetime(2026, 10, 23, 22, 0, tzinfo=UTC)
+
+    monkeypatch.setattr(limits, "_utcnow", lambda: Day.now)
+    return Day
 
 
 @pytest.fixture(autouse=True)
@@ -274,6 +313,24 @@ async def client(db_session_maker, fake_user, fake_ai) -> AsyncIterator[AsyncCli
     app.dependency_overrides[get_db] = _db_dep
     app.dependency_overrides[get_current_user] = _user_dep
     app.dependency_overrides[get_ai_client] = _ai_dep
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def auth_client(db_session_maker, fake_ai) -> AsyncIterator[AsyncClient]:
+    """HTTP client on the per-test DB + fake AI, with the REAL get_current_user:
+    requests authenticate with bearer tokens."""
+
+    async def _db_dep() -> AsyncIterator[AsyncSession]:
+        async with db_session_maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = _db_dep
+    app.dependency_overrides[get_ai_client] = lambda: fake_ai
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c

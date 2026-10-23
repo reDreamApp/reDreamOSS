@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import Field, ValidationInfo, field_validator
+from typing import Literal, Self
+
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ASYNC_DRIVERS = ("postgresql+asyncpg://", "sqlite+aiosqlite://")
@@ -25,6 +27,9 @@ HELPLINE_TEXT_DE_DEFAULT = (
     "Ein kostenloses Krisentelefon in deinem Land findest du unter findahelpline.com."
 )
 HELPLINE_TEXT_MAX_LEN = 1000
+INVITE_CODE_MIN_LEN = 8
+# The register request accepts invite codes up to this length.
+INVITE_CODE_MAX_LEN = 256
 _HELPLINE_TEXT_DEFAULTS = {
     "helpline_text_en": HELPLINE_TEXT_EN_DEFAULT,
     "helpline_text_de": HELPLINE_TEXT_DE_DEFAULT,
@@ -37,19 +42,19 @@ class Settings(BaseSettings):
     # Database — must use an async driver.
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"
 
-    # Supabase
-    supabase_url: str = ""
-    supabase_anon_key: str = ""
-    supabase_service_role_key: str = ""
+    # Accounts. open: anyone may register; invite: only with INVITE_CODE;
+    # closed: only the CLI (python -m redream_api.cli) creates users.
+    registration_mode: Literal["open", "invite", "closed"] = "invite"
+    # Required with invite, INVITE_CODE_MIN_LEN..INVITE_CODE_MAX_LEN characters,
+    # or startup fails.
+    invite_code: str = ""
+
+    # Chat turns + transcriptions + rehearsal renderings per user per UTC day
+    # (core/limits, in memory); 0 = off.
+    daily_ai_requests_per_user: int = Field(default=100, ge=0)
 
     # Lifetime of the signed rehearsal-audio link (services/audio_links).
     rehearsal_url_ttl_seconds: int = Field(default=300, ge=60, le=3600)
-
-    # Supabase JWT verification
-    supabase_jwt_iss: str = ""
-    supabase_jwks_url: str = ""
-    supabase_jwt_aud: str = "authenticated"
-    supabase_jwt_algorithms: str = "ES256"
 
     # Art. 9 consent — the consent-text version users must have granted.
     # Bump ONLY on material changes to the consent copy (new processor, new
@@ -76,6 +81,9 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # A failed setting is reported without its value: INVITE_CODE and the
+        # keys must not end up in a startup log.
+        hide_input_in_errors=True,
     )
 
     @field_validator("database_url")
@@ -104,13 +112,35 @@ class Settings(BaseSettings):
             )
         return text
 
+    @field_validator("registration_mode", mode="before")
+    @classmethod
+    def _normalize_registration_mode(cls, v: object) -> object:
+        # REGISTRATION_MODE= left blank in .env means the default.
+        return (v.strip().lower() or "invite") if isinstance(v, str) else v
+
+    @field_validator("invite_code")
+    @classmethod
+    def _strip_invite_code(cls, v: str) -> str:
+        return v.strip()
+
+    @model_validator(mode="after")
+    def _invite_code_with_invite_mode(self) -> Self:
+        if self.registration_mode == "invite" and len(self.invite_code) < INVITE_CODE_MIN_LEN:
+            raise ValueError(
+                f"INVITE_CODE must be at least {INVITE_CODE_MIN_LEN} characters while "
+                "REGISTRATION_MODE=invite (the default); set it, or set "
+                "REGISTRATION_MODE=open or REGISTRATION_MODE=closed"
+            )
+        if self.registration_mode == "invite" and len(self.invite_code) > INVITE_CODE_MAX_LEN:
+            raise ValueError(
+                f"INVITE_CODE must be at most {INVITE_CODE_MAX_LEN} characters (no one "
+                "could enter a longer one)"
+            )
+        return self
+
     def helpline_text_for(self, language: str) -> str:
         """The helpline text for a chat in `language`: German for "de", else English."""
         return self.helpline_text_de if language == "de" else self.helpline_text_en
-
-    @property
-    def jwt_algorithms_list(self) -> list[str]:
-        return [a.strip() for a in self.supabase_jwt_algorithms.split(",") if a.strip()]
 
 
 settings = Settings()

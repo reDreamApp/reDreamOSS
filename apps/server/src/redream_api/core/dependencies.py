@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from uuid import UUID
+from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models.user import User
+from ..db.repositories.auth_token_repo import AuthTokenRepo, hash_token
 from ..db.repositories.consent_repo import ConsentRepo
-from ..db.repositories.user_repo import UserRepo
 from ..db.session import async_session_maker
 from .config import settings
-from .supabase_jwt import JwtVerificationError, verify_supabase_jwt
 
 _bearer_scheme = HTTPBearer(auto_error=False)
+
+# One answer for a missing, unknown or expired token: it does not say which.
+NOT_AUTHENTICATED = "not authenticated"
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
@@ -24,38 +26,40 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def get_current_user(
+@dataclass(frozen=True)
+class CurrentSession:
+    """The signed-in user and the hash of the token they presented."""
+
+    user: User
+    token_hash: str
+
+
+async def get_current_session(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     db: AsyncSession = Depends(get_db),
-) -> User:
-    """Verify the bearer token and upsert the corresponding `users` row.
+) -> CurrentSession:
+    """Look the bearer token up (by its sha256) and renew it when due.
 
-    Raises 401 on missing/invalid token, 503 if JWKS is unreachable.
+    401 with WWW-Authenticate: Bearer for a missing, unknown or expired token.
     """
-
     if creds is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+        raise _unauthorized()
+    token_hash = hash_token(creds.credentials)
+    user = await AuthTokenRepo(db).authenticate(token_hash)
+    if user is None:
+        raise _unauthorized()
+    return CurrentSession(user=user, token_hash=token_hash)
 
-    try:
-        claims = await verify_supabase_jwt(creds.credentials)
-    except JwtVerificationError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 — JWKS fetch failure
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE, f"auth backend unreachable: {exc}"
-        ) from exc
 
-    sub = claims.get("sub")
-    if not sub:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "token missing sub")
+async def get_current_user(session: CurrentSession = Depends(get_current_session)) -> User:
+    """The signed-in user (see get_current_session)."""
+    return session.user
 
-    try:
-        user_id = UUID(str(sub))
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "sub is not a UUID") from exc
 
-    email = claims.get("email")
-    return await UserRepo(db).upsert_from_supabase(user_id=user_id, email=email)
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status.HTTP_401_UNAUTHORIZED, NOT_AUTHENTICATED, headers={"WWW-Authenticate": "Bearer"}
+    )
 
 
 async def require_consent(

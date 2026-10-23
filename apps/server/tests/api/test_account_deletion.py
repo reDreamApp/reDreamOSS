@@ -1,127 +1,152 @@
-"""Account deletion removes the Supabase login, not only the app data.
+"""Account deletion: DELETE /users/me removes the user's audio folder, then
+the `users` row; the database cascades to the login tokens and every row of
+the user. The data-only purge (/users/me/data) is gone: with the server's own
+login it would have deleted the login too.
 
-`auth_service.delete_login` calls the Auth admin API over httpx; tests install
-an `httpx.MockTransport` via the module's `_transport` seam.
+Runs with real tokens (`auth_client`), so the login's end is observable.
 """
 
 from __future__ import annotations
 
-from typing import Any
-from uuid import uuid4
+from pathlib import Path
+from uuid import UUID, uuid4
 
-import httpx
-import pytest
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from redream_api.db.repositories.user_repo import UserRepo
-from redream_api.services import auth_service
+from redream_ai.audio import store
+from redream_api.core.config import settings
+from redream_api.db.base import Base
+from redream_api.db.models.auth_token import AuthToken
+from redream_api.db.models.chat import Chat
+from redream_api.db.models.dream import Dream
+from redream_api.db.models.user import User
+from redream_api.db.models.user_consent import UserConsent
+from redream_api.db.repositories.auth_token_repo import AuthTokenRepo
+from redream_api.db.session import make_engine
 
-
-@pytest.fixture
-def auth_settings(monkeypatch):
-    monkeypatch.setattr(auth_service.settings, "supabase_url", "http://kong:8000/")
-    monkeypatch.setattr(auth_service.settings, "supabase_service_role_key", "srk")
-
-
-def _auth_api(monkeypatch, handler) -> list[httpx.Request]:
-    requests: list[httpx.Request] = []
-
-    def record(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return handler(request)
-
-    monkeypatch.setattr(auth_service, "_transport", httpx.MockTransport(record))
-    return requests
+PASSWORD = "correct horse battery"
 
 
-async def test_delete_login_calls_the_admin_api(auth_settings, monkeypatch):
-    requests = _auth_api(monkeypatch, lambda _: httpx.Response(200, json={}))
-    user_id = uuid4()
-
-    assert await auth_service.delete_login(user_id) is True
-
-    (request,) = requests
-    assert request.method == "DELETE"
-    assert str(request.url) == f"http://kong:8000/auth/v1/admin/users/{user_id}"
-    assert request.headers["apikey"] == "srk"
-    assert request.headers["authorization"] == "Bearer srk"
-
-
-async def test_a_login_that_is_already_gone_counts_as_deleted(auth_settings, monkeypatch):
-    _auth_api(monkeypatch, lambda _: httpx.Response(404, json={"error_code": "user_not_found"}))
-
-    assert await auth_service.delete_login(uuid4()) is True
-
-
-async def test_delete_login_reports_a_refusal(auth_settings, monkeypatch):
-    _auth_api(monkeypatch, lambda _: httpx.Response(500, text="boom"))
-
-    assert await auth_service.delete_login(uuid4()) is False
-
-
-async def test_delete_login_reports_an_unreachable_auth_service(auth_settings, monkeypatch):
-    def unreachable(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("no route", request=request)
-
-    _auth_api(monkeypatch, unreachable)
-
-    assert await auth_service.delete_login(uuid4()) is False
+async def _account(client, email: str) -> tuple[UUID, dict[str, str]]:
+    """A registered, consenting user with a dream and a chat."""
+    r = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": PASSWORD, "invite_code": settings.invite_code},
+    )
+    assert r.status_code == 201, r.text
+    user_id = UUID(r.json()["user"]["id"])
+    headers = {"Authorization": f"Bearer {r.json()['token']}"}
+    version = settings.consent_version
+    r = await client.post(
+        "/api/v1/users/me/consent",
+        json={"version": version, "text_version": version},
+        headers=headers,
+    )
+    assert r.status_code == 204, r.text
+    r = await client.post(
+        "/api/v1/dreams",
+        json={"title": "Forest", "original_dream": "Lost.", "is_nightmare": True},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    assert (await client.post("/api/v1/chats/start", json={}, headers=headers)).status_code == 201
+    return user_id, headers
 
 
-async def test_delete_login_fails_without_supabase_settings(monkeypatch):
-    monkeypatch.setattr(auth_service.settings, "supabase_url", "")
-    requests = _auth_api(monkeypatch, lambda _: httpx.Response(200, json={}))
-
-    assert await auth_service.delete_login(uuid4()) is False
-    assert requests == []
-
-
-def _fake_purges(monkeypatch, *, login_deleted: bool) -> list[str]:
-    from redream_api.api.v1.users import routes as user_routes
-
-    order: list[str] = []
-
-    def step(name: str, result: Any):
-        async def run(user_id):
-            order.append(name)
-            return result
-
-        return run
-
-    monkeypatch.setattr(user_routes, "delete_user_audio", step("audio", None))
-    monkeypatch.setattr(user_routes, "delete_login", step("login", login_deleted))
-    return order
+async def _rows(db_session_maker, user_id: UUID) -> dict[str, int]:
+    async with db_session_maker() as session:
+        return {
+            model.__name__: await session.scalar(
+                select(func.count()).select_from(model).where(column == user_id)
+            )
+            for model, column in (
+                (User, User.id),
+                (AuthToken, AuthToken.user_id),
+                (Dream, Dream.user_id),
+                (Chat, Chat.user_id),
+                (UserConsent, UserConsent.user_id),
+            )
+        }
 
 
-async def test_account_deletion_removes_the_login_last(
-    client, fake_user, db_session_maker, monkeypatch
+async def test_account_deletion_removes_login_rows_and_audio(
+    auth_client, db_session_maker, audio_dir
 ):
-    order = _fake_purges(monkeypatch, login_deleted=True)
+    alice, headers = await _account(auth_client, "alice@example.com")
+    bob, bob_headers = await _account(auth_client, "bob@example.com")
+    r = await auth_client.post(
+        "/api/v1/auth/login", json={"email": "alice@example.com", "password": PASSWORD}
+    )
+    second = {"Authorization": f"Bearer {r.json()['token']}"}
+    store.write(store.key_for(alice, 1, "en", "a" * 24), b"ID3 alice")
+    store.write(store.key_for(bob, 2, "en", "b" * 24), b"ID3 bob")
+    assert (await _rows(db_session_maker, alice))["AuthToken"] == 2
 
-    r = await client.delete("/api/v1/users/me")
+    r = await auth_client.delete("/api/v1/users/me", headers=headers)
 
     assert r.status_code == 204
-    assert order == ["audio", "login"]
-    async with db_session_maker() as session:
-        assert await UserRepo(session).get(fake_user.id) is None
+    assert set((await _rows(db_session_maker, alice)).values()) == {0}
+    assert not (audio_dir / "users" / str(alice)).exists()
+    for gone in (headers, second):
+        r = await auth_client.post("/api/v1/auth/session/validate", headers=gone)
+        assert r.status_code == 401
+    r = await auth_client.post(
+        "/api/v1/auth/login", json={"email": "alice@example.com", "password": PASSWORD}
+    )
+    assert r.status_code == 401
+    # Nobody else's account is touched.
+    assert set((await _rows(db_session_maker, bob)).values()) == {1}
+    assert (audio_dir / "users" / str(bob)).is_dir()
+    r = await auth_client.post("/api/v1/auth/session/validate", headers=bob_headers)
+    assert r.status_code == 204
 
 
-async def test_account_deletion_fails_when_the_login_stays(
-    client, fake_user, db_session_maker, monkeypatch
+async def test_a_failed_audio_deletion_keeps_the_account(
+    auth_client, db_session_maker, monkeypatch
 ):
-    _fake_purges(monkeypatch, login_deleted=False)
+    alice, headers = await _account(auth_client, "alice@example.com")
 
-    r = await client.delete("/api/v1/users/me")
+    def refuse(user_id):
+        raise OSError("busy")
 
-    # The app then asks the user to try again; their data is gone either way.
+    monkeypatch.setattr(store, "delete_user", refuse)
+
+    r = await auth_client.delete("/api/v1/users/me", headers=headers)
+
     assert r.status_code == 503
-    async with db_session_maker() as session:
-        assert await UserRepo(session).get(fake_user.id) is None
+    assert set((await _rows(db_session_maker, alice)).values()) == {1}
+    r = await auth_client.post("/api/v1/auth/session/validate", headers=headers)
+    assert r.status_code == 204
 
 
-async def test_the_data_purge_keeps_the_login(client, monkeypatch):
-    order = _fake_purges(monkeypatch, login_deleted=True)
+async def test_the_app_engine_cascades_on_sqlite_too(tmp_path: Path):
+    """DATABASE_URL may name SQLite: the app's engine (and the CLI's) then
+    enforces the foreign keys the deletion relies on, as Postgres does."""
+    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async with async_sessionmaker(bind=engine, class_=AsyncSession)() as session:
+            user_id = uuid4()
+            session.add(User(id=user_id, email="alice@example.com", password_hash="x"))
+            await session.commit()
+            await AuthTokenRepo(session).issue(user_id)
 
+            # The database's cascade, not the ORM's.
+            await session.execute(delete(User).where(User.id == user_id))
+            await session.commit()
+
+            assert await session.scalar(select(func.count()).select_from(AuthToken)) == 0
+    finally:
+        await engine.dispose()
+
+
+async def test_deletion_needs_a_token(auth_client):
+    assert (await auth_client.delete("/api/v1/users/me")).status_code == 401
+
+
+async def test_the_data_only_purge_is_gone(client):
     r = await client.delete("/api/v1/users/me/data")
 
-    assert r.status_code == 204
-    assert order == ["audio"]
+    assert r.status_code in (404, 405)

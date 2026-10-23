@@ -1,4 +1,4 @@
-"""User account management — delete account, GDPR purge, Art. 9 consent."""
+"""User account management — delete account, Art. 9 consent."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from ....core.dependencies import get_current_user, get_db
 from ....db.models.user import User
 from ....db.repositories.consent_repo import ConsentRepo
 from ....db.repositories.user_repo import UserRepo
-from ....services.auth_service import delete_login
 from ....services.rehearsal_audio import AUDIO_NOT_DELETED, delete_user_audio
 
 log = logging.getLogger(__name__)
@@ -95,35 +94,11 @@ async def delete_me(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete the account: rehearsal audio, app data, then the login.
+    """Delete the account: rehearsal audio, then the `users` row.
 
     The audio folder goes first: if that fails the answer is 503 and nothing
-    else is deleted. Deleting the `users` row cascades to dreams, chats and
-    the rest. The Supabase login goes last: if that fails the answer is 503
-    and the user is left with an empty account they can sign in to and
-    delete again.
-    """
-    user_id = user.id
-    await _delete_audio(user_id)
-    await UserRepo(db).delete(user_id)
-    if not await delete_login(user_id):
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "the login could not be deleted — try again",
-        )
-
-
-@router.delete("/me/data", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_my_data(
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    """GDPR purge: delete this user's rehearsal audio, then their Postgres data.
-
-    The login stays, so the user can keep using the app with an empty account.
-
-    The audio folder goes first: if that fails the answer is 503 and the
-    database is left untouched, so the user can try again.
+    else is deleted, so the user can try again. Deleting the row cascades to
+    the login tokens, dreams, chats, consent log and moods.
     """
     user_id = user.id
     await _delete_audio(user_id)

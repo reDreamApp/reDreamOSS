@@ -1,8 +1,8 @@
 """Rehearsal MP3s on the local disk, under AUDIO_DIR (ADR 0010).
 
 Key: ``users/{user_id}/{dream_id}/{language}-{hash}.mp3``, relative to
-AUDIO_DIR. The per-user folder is what account deletion and the GDPR purge
-remove; the per-dream folder what dream deletion and an edited dream remove.
+AUDIO_DIR. The per-user folder is what account deletion (DELETE /users/me)
+removes; the per-dream folder what dream deletion and an edited dream remove.
 A dream keeps one file per language: writing a new one deletes the older
 files of that language.
 

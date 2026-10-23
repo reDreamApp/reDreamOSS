@@ -118,9 +118,6 @@ class Settings(BaseSettings):
     tts_voice_en: str = ""
     tts_voice_de: str = ""
 
-    supabase_url: str = ""
-    supabase_service_role_key: str = ""
-
     # Rehearsal MP3s (audio/store.py): relative to the working directory,
     # resolved to an absolute path once, at load. Blank = the default.
     audio_dir: Path = Path(AUDIO_DIR_DEFAULT)

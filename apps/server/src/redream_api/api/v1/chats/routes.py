@@ -1,16 +1,17 @@
 """Chat routes — IRT-driven conversation with a safety gate.
 
 Flow for `POST /chats/{id}/message`:
-  1. Persist user message.
-  2. Call AI `safety_classify` (ADR 0005). If risk=high: mark user message as
+  1. Count the turn against DAILY_AI_REQUESTS_PER_USER (429 over it).
+  2. Persist user message.
+  3. Call AI `safety_classify` (ADR 0005). If risk=high: mark user message as
      flagged, return helpline payload, do NOT advance.
-  3. Else: call AI `chat` with the FULL history (stateless AI, ADR 0002).
-  4. Persist AI message with `prompt_version`.
-  5. Update `chat.current_stage` from the response. Set `is_done` if final.
-  6. If stage is `summary`/`final` and structured fields are present, upsert a
+  4. Else: call AI `chat` with the FULL history (stateless AI, ADR 0002).
+  5. Persist AI message with `prompt_version`.
+  6. Update `chat.current_stage` from the response. Set `is_done` if final.
+  7. If stage is `summary`/`final` and structured fields are present, upsert a
      Dream row from the structured payload (replaces legacy `_parse_summary`,
      ADR 0003).
-  7. Log the turn's token counts.
+  8. Log the turn's token counts.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....core.config import settings
 from ....core.dependencies import get_current_user, get_db, require_consent
+from ....core.limits import count_ai_request
 from ....db.models.chat import Chat
 from ....db.models.chat_message import ChatMessage
 from ....db.models.dream import Dream
@@ -220,9 +222,9 @@ async def _pre_turn(
     db: AsyncSession,
     ai: BaseAiClient,
 ) -> _TurnSetup:
-    """Shared pre-AI gates: 404/409 → persist user message → title → safety
-    classifier (ADR 0005, 502 on failure with the user message dropped,
-    high-risk short-circuit).
+    """Shared pre-AI gates: 404/409 → daily AI-request cap (429) → persist
+    user message → title → safety classifier (ADR 0005, 502 on failure with
+    the user message dropped, high-risk short-circuit).
 
     Raises HTTPException for every failure, so the streaming route runs this
     BEFORE the response starts and errors arrive as plain JSON, exactly like
@@ -236,6 +238,11 @@ async def _pre_turn(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "chat not found")
     if chat.is_done:
         raise HTTPException(status.HTTP_409_CONFLICT, "chat is already finished")
+
+    # ---- daily AI-request cap (core/limits) -------------------------------
+    # Counted at admission, before anything is stored or sent to a model: a
+    # turn that fails later still counts.
+    count_ai_request(user.id)
 
     # ---- persist user message --------------------------------------------
     user_msg = ChatMessage(

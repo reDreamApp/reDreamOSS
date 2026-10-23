@@ -15,6 +15,8 @@ from redream_api.core.dependencies import get_current_user
 from redream_api.db.models.user import User
 from redream_api.main import app
 
+from .conftest import NO_PASSWORD
+
 
 @pytest.fixture
 async def no_consent_user(client, db_session_maker) -> User:
@@ -23,7 +25,7 @@ async def no_consent_user(client, db_session_maker) -> User:
     Reuses the `client` fixture's overrides (db/ai) — only the user changes.
     """
     async with db_session_maker() as session:
-        user = User(id=uuid4(), email="fresh@example.com")
+        user = User(id=uuid4(), email="fresh@example.com", password_hash=NO_PASSWORD)
         session.add(user)
         await session.commit()
         await session.refresh(user)
@@ -111,8 +113,8 @@ async def test_reads_and_deletion_stay_open_without_consent(client, no_consent_u
     """Withdrawal must never lock users out of their own data (Art. 7(3))."""
     assert (await client.get("/api/v1/chats")).status_code == 200
     assert (await client.get("/api/v1/dreams")).status_code == 200
-    # GDPR purge works regardless of consent state.
-    r = await client.delete("/api/v1/users/me/data")
+    # Account deletion works regardless of consent state.
+    r = await client.delete("/api/v1/users/me")
     assert r.status_code == 204
 
 

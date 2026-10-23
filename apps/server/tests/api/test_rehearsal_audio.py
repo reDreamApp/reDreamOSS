@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import select
 
 from redream_ai.audio import store
+from redream_api.core import limits
 from redream_api.core.config import settings
 from redream_api.db.models.dream import Dream
 from redream_api.db.repositories.user_repo import UserRepo
@@ -491,22 +492,15 @@ async def test_a_failed_folder_deletion_keeps_the_dream(
     assert await _row(db_session_maker, dream_id) is not None
 
 
-@pytest.mark.parametrize("route", ["/api/v1/users/me", "/api/v1/users/me/data"])
-async def test_account_and_data_deletion_remove_the_user_folder(
-    client, fake_user, synth, audio_dir, db_session_maker, monkeypatch, route
+async def test_account_deletion_removes_the_user_folder(
+    client, fake_user, synth, audio_dir, db_session_maker
 ):
-    from redream_api.api.v1.users import routes as user_routes
-
-    async def login_deleted(user_id):
-        return True
-
-    monkeypatch.setattr(user_routes, "delete_login", login_deleted)
     other = store.key_for(uuid4(), 1, "en", "a" * 24)
     store.write(other, b"someone else's")
     await _rehearse(client, await _dream(client))
     await _rehearse(client, await _dream(client), "de")
 
-    r = await client.delete(route)
+    r = await client.delete("/api/v1/users/me")
 
     assert r.status_code == 204
     assert not (audio_dir / "users" / str(fake_user.id)).exists()
@@ -515,44 +509,27 @@ async def test_account_and_data_deletion_remove_the_user_folder(
         assert await UserRepo(session).get(fake_user.id) is None
 
 
-@pytest.mark.parametrize("route", ["/api/v1/users/me", "/api/v1/users/me/data"])
 async def test_a_failed_user_folder_deletion_keeps_everything(
-    client, fake_user, synth, audio_dir, db_session_maker, monkeypatch, route
+    client, fake_user, synth, audio_dir, db_session_maker, monkeypatch
 ):
-    from redream_api.api.v1.users import routes as user_routes
-
-    logins: list[UUID] = []
-
-    async def delete_login(user_id):
-        logins.append(user_id)
-        return True
-
     def refuse(user_id):
         raise OSError("busy")
 
-    monkeypatch.setattr(user_routes, "delete_login", delete_login)
     monkeypatch.setattr(store, "delete_user", refuse)
     dream_id = await _dream(client)
     await _rehearse(client, dream_id)
 
-    r = await client.delete(route)
+    r = await client.delete("/api/v1/users/me")
 
     assert r.status_code == 503
     assert r.json() == {"detail": "audio could not be deleted, try again"}
-    assert logins == []
     async with db_session_maker() as session:
         assert await UserRepo(session).get(fake_user.id) is not None
     assert await _row(db_session_maker, dream_id) is not None
     assert _dream_folder(audio_dir, fake_user.id, dream_id).is_dir()
 
 
-async def test_deleting_an_account_without_audio_works(client, fake_user, monkeypatch, audio_dir):
-    from redream_api.api.v1.users import routes as user_routes
-
-    async def login_deleted(user_id):
-        return True
-
-    monkeypatch.setattr(user_routes, "delete_login", login_deleted)
+async def test_deleting_an_account_without_audio_works(client, fake_user, audio_dir):
     shutil.rmtree(audio_dir, ignore_errors=True)
 
     assert (await client.delete("/api/v1/users/me")).status_code == 204
@@ -687,3 +664,33 @@ async def test_a_dream_row_deleted_after_the_check_is_404(
     r = await client.post(f"/api/v1/dreams/{dream_id}/rehearsal", json={"language": "en"})
 
     assert r.status_code == 404
+
+
+# --- the daily AI-request cap: renderings only ----------------------------------------
+
+
+async def test_a_rendering_counts_against_the_daily_cap_and_a_cache_hit_does_not(
+    client, fake_user, synth, day
+):
+    dream_id = await _dream(client)
+    for _ in range(99):
+        limits.count_ai_request(fake_user.id)
+
+    await _rehearse(client, dream_id)  # the 100th: rendered
+    await _rehearse(client, dream_id)  # stored audio: free
+    r = await client.post(f"/api/v1/dreams/{dream_id}/rehearsal", json={"language": "de"})
+
+    assert r.status_code == 429
+    assert r.json() == {"detail": "daily limit reached"}
+    assert r.headers["retry-after"] == str(2 * 3600)  # until UTC midnight
+    assert len(synth) == 1
+
+
+async def test_a_rehearsal_while_speech_output_is_off_is_free(client, fake_user, fake_ai, day):
+    dream_id = await _dream(client)
+    for _ in range(100):
+        limits.count_ai_request(fake_user.id)
+
+    r = await client.post(f"/api/v1/dreams/{dream_id}/rehearsal", json={"language": "en"})
+
+    assert r.status_code == 503

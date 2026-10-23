@@ -199,7 +199,7 @@ class TranscribeResponse(BaseModel):
 
 class RehearsalRequest(BaseModel):
     dream_id: str = Field(description="Positive integer as a decimal string; names the folder.")
-    user_id: str = Field(description="Owner's UUID; prefixes the store key for the GDPR purge.")
+    user_id: str = Field(description="Owner's UUID; prefixes the store key for account deletion.")
     rewritten_dream: str
     language: Language
 

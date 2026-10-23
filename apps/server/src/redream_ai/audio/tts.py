@@ -30,7 +30,7 @@ Key: ``users/{user_id}/{dream_id}/{language}-{hash}.mp3``. The hash covers
 model, voice, language and script, so an unchanged dream re-uses its file
 (``cache_hit``) and an edited dream, or one in a new voice or model, gets a
 new file; the older file of that language is then deleted. The per-user
-folder is what the backend's GDPR purge deletes.
+folder is what the backend's account deletion (DELETE /users/me) deletes.
 
 Privacy: the rewritten dream (Art. 9 content) goes to the TTS provider; pick
 it for its retention terms.

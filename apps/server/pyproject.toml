@@ -12,9 +12,7 @@ dependencies = [
     "aiosqlite>=0.20",
     "pydantic[email]>=2.10",
     "pydantic-settings>=2.6",
-    "python-jose[cryptography]>=3.3",
     "httpx>=0.27",
-    "cachetools>=5.5",
     # Multipart form parsing for the /api/v1/audio/transcribe upload route.
     "python-multipart>=0.0.32",
     # The OpenAI SDK drives every chat call (core agents, SafetyCritic, crisis
@@ -22,6 +20,8 @@ dependencies = [
     # networkx builds the clinical knowledge graph.
     "openai>=1.40",
     "networkx>=3.2",
+    # Password hashing for the server's own login (argon2id).
+    "argon2-cffi>=23.1",
 ]
 
 [dependency-groups]

@@ -1,6 +1,7 @@
 """ORM models. Imported by Alembic-replacement tooling AND by the test
 conftest's `Base.metadata.create_all` — keep imports complete."""
 
+from .auth_token import AuthToken
 from .chat import Chat
 from .chat_message import ChatMessage
 from .daily_mood import DailyMood
@@ -9,6 +10,7 @@ from .user import User
 from .user_consent import UserConsent
 
 __all__ = [
+    "AuthToken",
     "Chat",
     "ChatMessage",
     "DailyMood",
