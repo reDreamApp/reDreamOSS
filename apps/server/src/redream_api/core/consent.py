@@ -11,4 +11,4 @@ from __future__ import annotations
 # changes to the consent copy (new processor, new purpose): a bump makes every
 # user consent again on next launch. Deploy the server before the app
 # (RELEASING.md): an app with the new version is refused by an old server.
-CONSENT_VERSION = "2026-10-07"
+CONSENT_VERSION = "2026-10-23"

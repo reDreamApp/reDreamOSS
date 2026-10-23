@@ -1,4 +1,4 @@
-# apps/app — reDreamAI Flutter client
+# apps/app — reDreamOSS Flutter client
 
 Flutter mobile app (iOS + Android). Talks to `apps/server`, which also signs users in.
 

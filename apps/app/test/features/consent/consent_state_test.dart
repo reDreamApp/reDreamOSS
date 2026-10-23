@@ -5,7 +5,7 @@ import 'package:redream_app/features/consent/consent_state.dart';
 
 class _FakeConsentService implements IConsentService {
   bool granted = false;
-  String requiredVersion = '2026-10-07';
+  String requiredVersion = '2026-10-23';
   bool failStatus = false;
   bool failGrant = false;
   ApiException grantError = ApiException(500, 'grant failed');
@@ -48,7 +48,7 @@ void main() {
       await state.load();
 
       expect(state.consentRequired, isTrue);
-      expect(state.requiredVersion, '2026-10-07');
+      expect(state.requiredVersion, '2026-10-23');
     });
 
     test('load failure surfaces errorMessage, stays unknown', () async {
@@ -68,7 +68,7 @@ void main() {
 
       await state.grant();
 
-      expect(service.grantCalls, ['2026-10-07']);
+      expect(service.grantCalls, ['2026-10-23']);
       expect(state.consentRequired, isFalse);
     });
 

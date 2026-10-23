@@ -22,4 +22,4 @@ class ProgressStatsOut(BaseModel):
     average_mood: float | None
     today_mood: str | None
     dreams_logged: int
-    nightmares_treated: int
+    dreams_rewritten: int

@@ -1,7 +1,7 @@
 import 'package:redream_app/core/api/api_client.dart';
 
 /// Version of the consent copy bundled in this app, kept in step with ARBs.
-const consentTextVersion = '2026-10-07';
+const consentTextVersion = '2026-10-23';
 
 /// Backend consent status (`GET /users/me/consent`).
 class ConsentStatus {

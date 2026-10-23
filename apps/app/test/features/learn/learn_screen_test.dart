@@ -34,7 +34,7 @@ void main() {
     await _pumpLearn(tester);
 
     expect(
-      find.text('Our study: rewriting nightmares with a web application'),
+      find.text('Background: rewriting nightmares with a web application'),
       findsOneWidget,
     );
     expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -65,7 +65,7 @@ void main() {
     await _pumpLearn(tester, opened: opened);
 
     await tester.tap(
-      find.text('Our study: rewriting nightmares with a web application'),
+      find.text('Background: rewriting nightmares with a web application'),
     );
     await tester.pumpAndSettle();
 

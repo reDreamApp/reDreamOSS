@@ -702,7 +702,7 @@ void main() {
     await _settle(tester);
 
     expect(find.byType(BrandMark), findsOneWidget);
-    expect(find.text('reDreamAI', findRichText: true), findsOneWidget);
+    expect(find.text('reDreamOSS', findRichText: true), findsOneWidget);
     // The slogan stays English in the German app.
     expect(find.text('Transform your Dreams'), findsOneWidget);
 

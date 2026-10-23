@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>reDreamAI</string>
+	<string>reDreamOSS</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>reDreamAI</string>
+	<string>reDreamOSS</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -67,6 +67,6 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>reDreamAI uses the microphone so you can narrate your dream instead of typing it. Recordings are transcribed and immediately discarded — the audio is never stored.</string>
+	<string>reDreamOSS uses the microphone so you can narrate your dream instead of typing it. Your server turns the recording into text; the app does not keep the audio.</string>
 </dict>
 </plist>

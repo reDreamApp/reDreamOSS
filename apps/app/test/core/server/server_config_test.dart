@@ -10,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../fake_api.dart';
 
-const _consent = '2026-10-07';
+const _consent = '2026-10-23';
 
 Matcher _fails(ServerFailureKind kind) =>
     throwsA(isA<ServerFailure>().having((e) => e.kind, 'kind', kind));

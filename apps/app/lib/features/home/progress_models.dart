@@ -25,7 +25,7 @@ class ProgressStats {
   const ProgressStats({
     required this.rehearsalStreak,
     required this.dreamsLogged,
-    required this.nightmaresTreated,
+    required this.dreamsRewritten,
     this.averageIntensity,
     this.averageMood,
     this.todayMood,
@@ -37,7 +37,7 @@ class ProgressStats {
     averageMood: (json['average_mood'] as num?)?.toDouble(),
     todayMood: Mood.fromWire(json['today_mood'] as String?),
     dreamsLogged: json['dreams_logged'] as int? ?? 0,
-    nightmaresTreated: json['nightmares_treated'] as int? ?? 0,
+    dreamsRewritten: json['dreams_rewritten'] as int? ?? 0,
   );
 
   final int rehearsalStreak;
@@ -45,5 +45,5 @@ class ProgressStats {
   final double? averageMood;
   final Mood? todayMood;
   final int dreamsLogged;
-  final int nightmaresTreated;
+  final int dreamsRewritten;
 }

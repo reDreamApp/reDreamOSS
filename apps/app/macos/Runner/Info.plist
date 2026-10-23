@@ -29,6 +29,6 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>reDreamAI uses the microphone so you can narrate your dream instead of typing it. Recordings are transcribed and immediately discarded — the audio is never stored.</string>
+	<string>reDreamOSS uses the microphone so you can narrate your dream instead of typing it. Your server turns the recording into text; the app does not keep the audio.</string>
 </dict>
 </plist>

@@ -1,6 +1,6 @@
 {
-    "name": "reDreamAI",
-    "short_name": "reDreamAI",
+    "name": "reDreamOSS",
+    "short_name": "reDreamOSS",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

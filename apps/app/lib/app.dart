@@ -20,7 +20,7 @@ class ReDreamApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
     return MaterialApp(
-      title: 'reDreamAI',
+      title: 'reDreamOSS',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,

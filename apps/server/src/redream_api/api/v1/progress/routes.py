@@ -59,9 +59,7 @@ async def get_stats(
         average_mood=avg_mood,
         today_mood=today_mood,
         dreams_logged=len(dreams),
-        nightmares_treated=sum(
-            1 for d in nightmares if d.rewritten_dream
-        ),
+        dreams_rewritten=sum(1 for d in dreams if d.rewritten_dream),
     )
 
 

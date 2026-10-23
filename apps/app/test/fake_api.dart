@@ -129,7 +129,7 @@ SseBody streamTurn({
 /// What `GET /api/v1/instance` answers.
 Map<String, Object?> instanceJson({
   int apiVersion = 1,
-  String consentVersion = '2026-10-07',
+  String consentVersion = '2026-10-23',
   String registration = 'invite',
   String? name,
   bool voice = true,
@@ -155,8 +155,8 @@ Map<String, Object?> instanceJson({
 };
 
 Map<String, Object?> consentJson({bool required = false}) => {
-  'required_version': '2026-10-07',
-  'granted_version': required ? null : '2026-10-07',
+  'required_version': '2026-10-23',
+  'granted_version': required ? null : '2026-10-23',
   'consent_required': required,
 };
 
@@ -227,7 +227,7 @@ Map<String, dynamic> chatJson(int id, {bool done = false, String? title}) => {
 Map<String, dynamic> statsJson({
   int streak = 2,
   int dreams = 2,
-  int treated = 1,
+  int rewritten = 1,
   String? mood,
 }) => {
   'rehearsal_streak': streak,
@@ -235,5 +235,5 @@ Map<String, dynamic> statsJson({
   'average_mood': 4.0,
   'today_mood': mood,
   'dreams_logged': dreams,
-  'nightmares_treated': treated,
+  'dreams_rewritten': rewritten,
 };

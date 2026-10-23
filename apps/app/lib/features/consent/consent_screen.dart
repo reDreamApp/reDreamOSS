@@ -135,7 +135,9 @@ class _ConsentScreenState extends State<ConsentScreen> {
                         ),
                         _ConsentPoint(
                           icon: Icons.dns_outlined,
-                          text: l10n.consentBulletProcessors,
+                          text: l10n.consentBulletProcessors(
+                            context.watch<ServerConfig>().address,
+                          ),
                         ),
                         _ConsentPoint(
                           icon: Icons.tune_outlined,

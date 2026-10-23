@@ -34,7 +34,7 @@ class _ExportDataScreenState extends State<ExportDataScreen> {
         ':',
         '-',
       );
-      final file = File('${dir.path}/redreamai_export_$stamp.json');
+      final file = File('${dir.path}/redream_export_$stamp.json');
       await file.writeAsString(
         const JsonEncoder.withIndent('  ').convert(data),
         flush: true,

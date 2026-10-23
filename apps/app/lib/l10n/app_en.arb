@@ -1,6 +1,6 @@
 {
   "@@locale": "en",
-  "appTitle": "reDreamAI",
+  "appTitle": "reDreamOSS",
   "ok": "OK",
   "cancel": "Cancel",
   "delete": "Delete",
@@ -108,11 +108,11 @@
   "onboardingWelcomeTitle": "Welcome to",
   "onboardingWelcomeBody": "Your new favorite app to log dreams and rewrite the difficult ones.",
   "onboardingScienceTitle": "The idea behind it",
-  "onboardingScienceBody": "A routine inspired by techniques from Imagery Rehearsal Therapy (IRT). reDreamAI itself is not therapy and does not treat any condition.",
+  "onboardingScienceBody": "A routine inspired by imagery-rehearsal techniques. reDreamOSS itself is not therapy and does not treat any condition.",
   "onboardingAiTitle": "AI-guided sessions",
-  "onboardingAiBody": "reDreamAI uses advanced AI to guide you through each session:\n1) Record your nightmare\n2) Rewrite it with a happy ending\n3) Rehearse the new version",
+  "onboardingAiBody": "reDreamOSS uses advanced AI to guide you through each session:\n1) Record your nightmare\n2) Rewrite it with a happy ending\n3) Rehearse the new version",
   "onboardingPrivacyTitle": "Your dreams are private",
-  "onboardingPrivacyBody": "reDreamAI is built with security in mind. We only use secure European services and are GDPR compliant.",
+  "onboardingPrivacyBody": "Your journal is kept on the server you connect to, run by whoever gave you its address. On your phone, saved dreams are encrypted.",
   "onboardingProfileTitle": "Help us get to know you better",
   "onboardingProfileHint": "All answers are optional.",
   "onboardingSubmit": "Get started",
@@ -130,7 +130,7 @@
   "freqRarely": "Rarely",
   "freqNever": "Never",
   "homeHeadline": "Transform your Dreams",
-  "homeStartBody": "Our AI rewrites your nightmares with you to sleep calm again!",
+  "homeStartBody": "Rewrite a difficult dream with the AI, then rehearse its new ending.",
   "homeBeginSession": "Begin Session",
   "homeProgressTitle": "Your Progress",
   "statStreak": "Streak",
@@ -392,7 +392,7 @@
     }
   },
   "reminderCancelled": "Daily reminder cancelled",
-  "reminderNotificationTitle": "reDreamAI reminder",
+  "reminderNotificationTitle": "reDreamOSS reminder",
   "reminderNotificationBody": "It's time to rehearse your dream.",
   "settingsTitle": "Profile & Settings",
   "settingsProfileSection": "Profile Information",
@@ -423,7 +423,7 @@
       }
     }
   },
-  "settingsTagline": "A self-help companion for working with difficult dreams. reDreamAI does not diagnose or treat any condition — if nightmares are seriously distressing you, please talk to a doctor or psychotherapist.",
+  "settingsTagline": "A self-help companion for working with difficult dreams. reDreamOSS does not diagnose or treat any condition — if nightmares are seriously distressing you, please talk to a doctor or psychotherapist.",
   "settingsSignOut": "Sign out",
   "changeEmailTitle": "Change email",
   "changeEmailHeading": "Update email address",
@@ -483,8 +483,8 @@
     }
   },
   "learnTitle": "Learning",
-  "learnStudyTitle": "Our study: rewriting nightmares with a web application",
-  "learnStudyExcerpt": "A randomized controlled trial by Voss, Peters, Pipa and Lüth, published in the journal Somnologie in 2026. It examined the web application DreamMend. reDreamAI itself is not therapy and does not treat any condition.",
+  "learnStudyTitle": "Background: rewriting nightmares with a web application",
+  "learnStudyExcerpt": "A randomized controlled trial by Voss, Peters, Pipa and Lüth, published in the journal Somnologie in 2026. It examined the web application DreamMend. reDreamOSS itself is not therapy and does not treat any condition.",
   "learnOpenArticle": "Open the article",
   "learnOpenFailed": "Unable to open article link.",
   "chatMicPermissionDenied": "Microphone access is off. Enable it in your device settings to record your dream.",
@@ -497,19 +497,26 @@
   "chatFinishedReadOnly": "This session is finished and can only be viewed.",
   "chatStartNewSession": "Start new session",
   "consentTitle": "Your data, your consent",
-  "consentIntro": "reDreamAI helps you work through distressing dreams. To do that, the app processes what you share about your dreams and how you feel — information about your health. Under EU law (GDPR Art. 9), this needs your explicit consent.",
-  "consentBulletData": "What is processed: your dream descriptions and voice recordings (transcribed, then immediately discarded), rewritten dreams, intensity ratings, and mood entries.",
-  "consentBulletProcessors": "Who processes it: our servers hosted at Scaleway (France). Scaleway and Mistral AI (France) generate AI responses, transcriptions and rehearsal audio; Mistral may retain inputs for up to 30 days for abuse monitoring. Chatbot inputs and responses are also stored in self-hosted Langfuse on our EU servers for diagnostics for up to 30 days.",
+  "consentIntro": "reDreamOSS helps you work through distressing dreams. To do that, it processes what you share about your dreams and how you feel — information about your health. Data-protection laws such as the EU's GDPR (Art. 9) require your explicit consent for this.",
+  "consentBulletData": "What is processed: your dream descriptions and voice recordings (turned into text; the server does not keep the audio), rewritten dreams, intensity ratings, and mood entries.",
+  "consentBulletProcessors": "Who processes it: the server you connected to ({server}) stores it and sends your texts and recordings to the AI service its operator chose, to write replies, transcribe speech and create audio. The operator's privacy policy names that service and how long it keeps data.",
+  "@consentBulletProcessors": {
+    "placeholders": {
+      "server": {
+        "type": "String"
+      }
+    }
+  },
   "consentBulletControl": "Your control: withdraw this consent anytime in Settings — dream features then pause until you consent again. You can view, export, or delete your data at any time regardless.",
   "consentCheckbox": "I consent to the processing of my health-related data as described above",
   "consentContinue": "Agree and continue",
-  "consentDeclineHint": "Without this consent, reDreamAI can't process dreams. You can sign out instead.",
+  "consentDeclineHint": "Without this consent, reDreamOSS can't process dreams. You can sign out instead.",
   "consentSignOut": "Sign out",
   "consentLoadError": "Couldn't check your consent status.",
   "settingsWithdrawConsent": "Withdraw data consent",
   "settingsWithdrawConsentSubtitle": "Pause processing of your dream data",
   "withdrawConsentTitle": "Withdraw consent?",
-  "withdrawConsentBody": "reDreamAI will stop processing your dream data, and dream features will pause until you consent again. Your saved data stays untouched — you can still view, export, or delete it.",
+  "withdrawConsentBody": "The server will stop processing your dream data, and dream features will pause until you consent again. Your saved data stays untouched — you can still view, export, or delete it.",
   "withdrawConsentConfirm": "Withdraw",
   "chatStreamInterrupted": "The connection dropped before the reply arrived. Please send your message again.",
   "chatResendHint": "Your last message wasn't delivered.",
