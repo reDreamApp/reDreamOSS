@@ -14,11 +14,13 @@ REHEARSAL_OUTPUT_FIELDS = (
     "rehearsal_language",
     "rehearsal_generated_at",
 )
+# The column behind rehearsal_audio_url is set by the rehearsal route alone.
+_REJECTED_INPUT_FIELDS = (*REHEARSAL_OUTPUT_FIELDS, "rehearsal_audio_key")
 
 
 def _reject_rehearsal_fields(values: object) -> object:
     if isinstance(values, dict):
-        present = sorted(f for f in REHEARSAL_OUTPUT_FIELDS if values.get(f) is not None)
+        present = sorted(f for f in _REJECTED_INPUT_FIELDS if values.get(f) is not None)
         if present:
             raise ValueError(
                 f"{present} are output-only. Use POST /dreams/{{id}}/rehearsal to generate them."

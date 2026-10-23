@@ -63,7 +63,7 @@ async def test_set_intensity_does_not_invalidate_rehearsal_audio(
         dream = (
             await session.scalars(select(Dream).where(Dream.user_id == fake_user.id))
         ).one()
-        dream.rehearsal_audio_url = "https://example.test/audio.mp3"
+        dream.rehearsal_audio_key = f"users/{fake_user.id}/{dream.id}/en-{'a' * 24}.mp3"
         dream.rehearsal_script = "script"
         session.add(dream)
         await session.commit()
@@ -78,7 +78,7 @@ async def test_set_intensity_does_not_invalidate_rehearsal_audio(
             await session.scalars(select(Dream).where(Dream.user_id == fake_user.id))
         ).one()
     assert dream.intensity == 3
-    assert dream.rehearsal_audio_url == "https://example.test/audio.mp3"
+    assert dream.rehearsal_audio_key == f"users/{fake_user.id}/{dream.id}/en-{'a' * 24}.mp3"
     assert dream.rehearsal_script == "script"
 
 

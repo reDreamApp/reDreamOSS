@@ -39,7 +39,8 @@ class Dream(Base):
     session_id: Mapped[str | None] = mapped_column(String, index=True)
     source: Mapped[str] = mapped_column(String, nullable=False, default="manual", index=True)
 
-    rehearsal_audio_url: Mapped[str | None] = mapped_column(String)
+    # Store key under AUDIO_DIR (redream_ai.audio.store); served as a signed link.
+    rehearsal_audio_key: Mapped[str | None] = mapped_column(String)
     rehearsal_script: Mapped[str | None] = mapped_column(String)
     rehearsal_duration: Mapped[str | None] = mapped_column(String)
     rehearsal_language: Mapped[str | None] = mapped_column(String)

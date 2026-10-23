@@ -42,7 +42,14 @@ from .conftest import start_chat
 
 _CONTENT_1 = 'data: {"content": "You turn ", "stages": ["rewriting"], "language": "en"}'
 _CONTENT_2 = 'data: {"content": "and face it.", "stages": ["rewriting"], "language": "en"}'
-_REHEARSAL = {"dream_id": "7", "user_id": "u-1", "rewritten_dream": "A lantern.", "language": "en"}
+_REHEARSAL_USER = "0f8b6c1e-2a3d-4e5f-8a9b-0c1d2e3f4a5b"
+_REHEARSAL = {
+    "dream_id": "7",
+    "user_id": _REHEARSAL_USER,
+    "rewritten_dream": "A lantern.",
+    "language": "en",
+}
+_REHEARSAL_KEY = f"users/{_REHEARSAL_USER}/7/en-{'a' * 24}.mp3"
 _VOICE_ON = {
     "stt_base_url": "http://speech.invalid/v1",
     "stt_api_key": "stt-key",
@@ -320,7 +327,7 @@ async def test_rehearsal_generate_validates_and_returns_wire_json(ai, ai_client,
     async def fake(req):
         seen.append(req)
         return RehearsalResponse(
-            audio_url="https://supabase.example.com/a.mp3",
+            audio_key=_REHEARSAL_KEY,
             script="A lantern.",
             duration_estimate="0:01",
             voice_id="gb_jane_neutral",
@@ -331,7 +338,7 @@ async def test_rehearsal_generate_validates_and_returns_wire_json(ai, ai_client,
     resp = await ai_client.rehearsal_generate(_REHEARSAL)
 
     assert resp == {
-        "audio_url": "https://supabase.example.com/a.mp3",
+        "audio_key": _REHEARSAL_KEY,
         "script": "A lantern.",
         "duration_estimate": "0:01",
         "voice_id": "gb_jane_neutral",
@@ -339,7 +346,10 @@ async def test_rehearsal_generate_validates_and_returns_wire_json(ai, ai_client,
     }
     assert seen == [
         RehearsalRequest(
-            dream_id="7", user_id="u-1", rewritten_dream="A lantern.", language=Language.EN
+            dream_id="7",
+            user_id=_REHEARSAL_USER,
+            rewritten_dream="A lantern.",
+            language=Language.EN,
         )
     ]
 

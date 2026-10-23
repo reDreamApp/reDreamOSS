@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 # setdefault: a real CI/env value still wins.
 os.environ.setdefault("LLM_BASE_URL", "http://llm.invalid/v1")
@@ -62,6 +63,16 @@ def _no_remembered_adjustments() -> Iterator[None]:
     chat_request._adjusted.clear()
     chat_request._warned.clear()
     chat_request._warned_out_of_tokens.clear()
+
+
+@pytest.fixture(autouse=True)
+def audio_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """AUDIO_DIR for this test: a fresh folder under tmp_path, never the repo."""
+    from redream_ai.config import settings
+
+    path = tmp_path.resolve() / "audio"
+    monkeypatch.setattr(settings, "audio_dir", path)
+    return path
 
 
 @pytest.fixture

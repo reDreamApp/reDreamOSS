@@ -234,6 +234,16 @@ async def fake_user(db_session_maker) -> User:
     return user
 
 
+@pytest.fixture(autouse=True)
+def audio_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """AUDIO_DIR for this test: a fresh folder under tmp_path, never the repo."""
+    from redream_ai.config import settings as ai_settings
+
+    path = tmp_path.resolve() / "audio"
+    monkeypatch.setattr(ai_settings, "audio_dir", path)
+    return path
+
+
 @pytest.fixture
 def fake_ai() -> FakeAiClient:
     return FakeAiClient()

@@ -39,6 +39,7 @@ from ....db.repositories.chat_message_repo import ChatMessageRepo
 from ....db.repositories.chat_repo import ChatRepo
 from ....db.repositories.dream_repo import DreamRepo
 from ....services.ai_client import AIServiceError, BaseAiClient, get_ai_client
+from ....services.rehearsal_audio import clear_rehearsal, discard_dream_audio
 from .schemas import (
     ChatIntensityRequest,
     ChatIntensityResponse,
@@ -633,11 +634,8 @@ async def _upsert_dream_from_structured(
             existing.intensity = intensity
         existing.last_edited = datetime.now(UTC)
         # Rewritten changed → invalidate any cached rehearsal audio.
-        existing.rehearsal_audio_url = None
-        existing.rehearsal_script = None
-        existing.rehearsal_duration = None
-        existing.rehearsal_language = None
-        existing.rehearsal_generated_at = None
+        await discard_dream_audio(user_id, existing.id)
+        clear_rehearsal(existing)
         return await repo.save(existing)
 
     dream = Dream(

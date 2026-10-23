@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -17,6 +18,9 @@ TTS_REQUIRED = (
     "TTS_MODEL, TTS_VOICE or TTS_VOICE_EN and TTS_VOICE_DE "
     "(and TTS_BASE_URL/TTS_API_KEY or LLM_BASE_URL/LLM_API_KEY)"
 )
+
+# Where rehearsal MP3s are written (AUDIO_DIR), relative to the working directory.
+AUDIO_DIR_DEFAULT = "data/audio"
 
 # The languages rehearsal audio is rendered in (models.Language); TTS is on
 # only while each has a voice.
@@ -116,11 +120,10 @@ class Settings(BaseSettings):
 
     supabase_url: str = ""
     supabase_service_role_key: str = ""
-    supabase_storage_bucket: str = "rehearsal-audio"
-    # Host the app can reach, when SUPABASE_URL is an internal compose address.
-    supabase_public_url: str = ""
-    # Lifetime of the signed rehearsal-audio URL stored on the dream.
-    rehearsal_url_ttl_seconds: int = Field(default=300, ge=60, le=3600)
+
+    # Rehearsal MP3s (audio/store.py): relative to the working directory,
+    # resolved to an absolute path once, at load. Blank = the default.
+    audio_dir: Path = Path(AUDIO_DIR_DEFAULT)
 
     environment: str = "development"
     log_level: str = "INFO"
@@ -232,10 +235,16 @@ class Settings(BaseSettings):
             )
         return text
 
-    @field_validator("rehearsal_url_ttl_seconds", mode="before")
+    @field_validator("audio_dir", mode="before")
     @classmethod
-    def _migrate_audio_ttl(cls, value: object) -> object:
-        return 300 if isinstance(value, (str, int)) and int(value) > 3600 else value
+    def _audio_dir_default(cls, value: object) -> object:
+        # AUDIO_DIR= left blank in .env means the default, not the working directory.
+        return AUDIO_DIR_DEFAULT if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("audio_dir")
+    @classmethod
+    def _resolve_audio_dir(cls, value: Path) -> Path:
+        return value.resolve()
 
     model_config = SettingsConfigDict(
         env_file=".env",

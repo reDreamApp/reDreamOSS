@@ -1,15 +1,18 @@
-"""TTS: one provider from configuration (TTS_*) + the Supabase Storage cache (ADR 0010).
+"""TTS: one provider from configuration (TTS_*) + the local audio store (ADR 0010).
 
 Fully offline: an httpx.MockTransport goes in via the module's `_transport`
-seam and stands in for both the speech endpoint and Supabase Storage. Both
-TTS_API_STYLEs are covered: ``openai`` (``voice``, the MP3 as the body) and
-``mistral`` (``voice_id``, the MP3 base64-encoded in ``audio_data``).
+seam and stands in for the speech endpoint; the MP3s land in this test's
+AUDIO_DIR (conftest's `audio_dir`). Both TTS_API_STYLEs are covered:
+``openai`` (``voice``, the MP3 as the body) and ``mistral`` (``voice_id``, the
+MP3 base64-encoded in ``audio_data``).
 """
 
 from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
+from uuid import UUID
 
 import httpx
 import pytest
@@ -18,6 +21,7 @@ from pydantic import ValidationError
 
 import redream_ai.api.audio as audio
 import redream_ai.audio.tts as tts
+from redream_ai.audio import store
 from redream_ai.config import TTS_LANGUAGES, Settings
 from redream_ai.llm.base import LlmUnavailableError
 from redream_ai.models import Language, RehearsalRequest
@@ -40,10 +44,6 @@ def _configured(monkeypatch):
     monkeypatch.setattr(s, "tts_voice", "marin")
     monkeypatch.setattr(s, "tts_voice_en", "")
     monkeypatch.setattr(s, "tts_voice_de", "")
-    monkeypatch.setattr(s, "supabase_url", "http://kong:8000")
-    monkeypatch.setattr(s, "supabase_public_url", "https://supabase.example.com")
-    monkeypatch.setattr(s, "supabase_service_role_key", "srk")
-    monkeypatch.setattr(s, "supabase_storage_bucket", "rehearsal-audio")
 
 
 @pytest.fixture
@@ -56,18 +56,31 @@ def mistral_style(monkeypatch):
     monkeypatch.setattr(s, "tts_voice_de", "voice_481")
 
 
+_USER = UUID("0f8b6c1e-2a3d-4e5f-8a9b-0c1d2e3f4a5b")
+
+
 def _req(text: str = "You walk home with a warm lantern.", lang: Language = Language.EN):
-    return RehearsalRequest(dream_id="7", user_id="u-1", rewritten_dream=text, language=lang)
+    return RehearsalRequest(dream_id="7", user_id=str(_USER), rewritten_dream=text, language=lang)
+
+
+def _stored(audio_dir: Path) -> dict[str, bytes]:
+    """Every file under AUDIO_DIR, by key."""
+    if not audio_dir.exists():
+        return {}
+    return {
+        path.relative_to(audio_dir).as_posix(): path.read_bytes()
+        for path in audio_dir.rglob("*")
+        if path.is_file()
+    }
 
 
 class _Fake:
-    """The speech endpoint (in the configured style) + a dict-backed Storage bucket.
+    """The speech endpoint, in the configured style.
 
     `speech_status` may be a status code or None for a connection error.
     """
 
     def __init__(self, *, speech_status: int | None = 200, audio: bytes = _AUDIO) -> None:
-        self.objects: dict[str, bytes] = {}
         self.speech_status = speech_status
         self.audio = audio
         self.speech_calls: list[dict[str, object]] = []
@@ -75,38 +88,17 @@ class _Fake:
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        url = str(request.url)
-        if url == _SPEECH_URL:
-            assert request.headers["Authorization"] == f"Bearer {tts.settings.tts_key}"
-            self.speech_calls.append(json.loads(request.content))
-            if self.speech_status is None:
-                raise httpx.ConnectError("refused", request=request)
-            if self.speech_status != 200:
-                return httpx.Response(self.speech_status, text="nope")
-            if tts.settings.tts_api_style == "mistral":
-                encoded = base64.b64encode(self.audio).decode()
-                return httpx.Response(200, json={"audio_data": encoded})
-            return httpx.Response(200, content=self.audio, headers={"Content-Type": "audio/mpeg"})
-        assert request.headers["apikey"] == "srk"
-        prefix = "http://kong:8000/storage/v1/object/"
-        assert url.startswith(prefix), url
-        rest = url[len(prefix) :]
-        if rest == "list/rehearsal-audio":
-            body = json.loads(request.content)
-            folder, name = body["prefix"], body["search"]
-            hits = [{"name": name}] if f"{folder}/{name}" in self.objects else []
-            return httpx.Response(200, json=hits)
-        if rest.startswith("sign/rehearsal-audio/"):
-            path = rest[len("sign/rehearsal-audio/") :]
-            return httpx.Response(
-                200, json={"signedURL": f"/object/sign/rehearsal-audio/{path}?token=t"}
-            )
-        if rest.startswith("rehearsal-audio/"):
-            assert request.headers["x-upsert"] == "true"
-            assert request.headers["Content-Type"] == "audio/mpeg"
-            self.objects[rest[len("rehearsal-audio/") :]] = request.content
-            return httpx.Response(200, json={"Key": rest})
-        return httpx.Response(404)
+        assert str(request.url) == _SPEECH_URL
+        assert request.headers["Authorization"] == f"Bearer {tts.settings.tts_key}"
+        self.speech_calls.append(json.loads(request.content))
+        if self.speech_status is None:
+            raise httpx.ConnectError("refused", request=request)
+        if self.speech_status != 200:
+            return httpx.Response(self.speech_status, text="nope")
+        if tts.settings.tts_api_style == "mistral":
+            encoded = base64.b64encode(self.audio).decode()
+            return httpx.Response(200, json={"audio_data": encoded})
+        return httpx.Response(200, content=self.audio, headers={"Content-Type": "audio/mpeg"})
 
 
 def _install(monkeypatch, fake: _Fake) -> _Fake:
@@ -301,26 +293,26 @@ async def test_a_success_without_audio_is_unavailable(monkeypatch, style, respon
 
 
 @pytest.mark.parametrize("status", [400, 401, 404, 422])
-async def test_hard_tts_error_is_not_retried(monkeypatch, status):
+async def test_hard_tts_error_is_not_retried(monkeypatch, audio_dir, status):
     fake = _install(monkeypatch, _Fake(speech_status=status))
     with pytest.raises(LlmUnavailableError, match=f"TTS {status}"):
         await tts.generate_rehearsal(_req())
     assert len(fake.speech_calls) == 1
-    assert fake.objects == {}
+    assert _stored(audio_dir) == {}
 
 
 @pytest.mark.parametrize("status", [429, 500, 503, None])  # None: connection error
-async def test_transient_tts_error_is_retried(monkeypatch, status):
+async def test_transient_tts_error_is_retried(monkeypatch, audio_dir, status):
     fake = _install(monkeypatch, _Fake(speech_status=status))
     with pytest.raises(LlmUnavailableError):
         await tts.generate_rehearsal(_req())
     assert len(fake.speech_calls) == tts._ATTEMPTS == 2
-    assert fake.objects == {}
+    assert _stored(audio_dir) == {}
 
 
 @pytest.mark.parametrize("style", ["openai", "mistral"])
 @pytest.mark.parametrize("status", [429, 503, None])
-async def test_transient_tts_error_recovers_on_retry(monkeypatch, style, status):
+async def test_transient_tts_error_recovers_on_retry(monkeypatch, audio_dir, style, status):
     monkeypatch.setattr(tts.settings, "tts_api_style", style)
     fake = _Fake(speech_status=status)
 
@@ -333,14 +325,14 @@ async def test_transient_tts_error_recovers_on_retry(monkeypatch, style, status)
     response = await tts.generate_rehearsal(_req())
     assert response.cache_hit is False
     assert len(fake.speech_calls) == 2
-    assert list(fake.objects.values()) == [_AUDIO]
+    assert list(_stored(audio_dir).values()) == [_AUDIO]
 
 
-# --- rehearsal: synthesis + Storage -------------------------------------------
+# --- rehearsal: synthesis + the store -----------------------------------------
 
 
 @pytest.mark.parametrize("style", ["openai", "mistral"])
-async def test_generates_uploads_and_signs(monkeypatch, style):
+async def test_generates_stores_and_returns_the_key(monkeypatch, audio_dir, style):
     monkeypatch.setattr(tts.settings, "tts_api_style", style)
     fake = _install(monkeypatch, _Fake())
 
@@ -350,9 +342,8 @@ async def test_generates_uploads_and_signs(monkeypatch, style):
     assert resp.voice_id == "marin"
     assert resp.script == "You walk home with a warm lantern."
     assert resp.duration_estimate == "0:03"
-    (path,) = fake.objects
-    assert path.startswith("users/u-1/7/v2-en-") and path.endswith(".mp3")
-    assert fake.objects[path] == _AUDIO
+    assert _stored(audio_dir) == {resp.audio_key: _AUDIO}
+    assert resp.audio_key.startswith(f"users/{_USER}/7/en-") and store.is_key(resp.audio_key)
     voice_field = "voice_id" if style == "mistral" else "voice"
     assert fake.speech_calls == [
         {
@@ -362,21 +353,17 @@ async def test_generates_uploads_and_signs(monkeypatch, style):
             "response_format": "mp3",
         }
     ]
-    # Signed URL points at the public host, not the internal compose address.
-    assert resp.audio_url == (
-        f"https://supabase.example.com/storage/v1/object/sign/rehearsal-audio/{path}?token=t"
-    )
 
 
-async def test_stored_audio_gets_a_seek_header(monkeypatch):
+async def test_stored_audio_gets_a_seek_header(monkeypatch, audio_dir):
     """The provider's MP3 may carry no length header; players misreport it without one."""
     # MPEG-2 Layer III frames, 80 kbit/s, 22.05 kHz mono.
     audio_bytes = ((0xFFF390C0).to_bytes(4, "big") + bytes(257)) * 4
-    fake = _install(monkeypatch, _Fake(audio=audio_bytes))
+    _install(monkeypatch, _Fake(audio=audio_bytes))
 
     await tts.generate_rehearsal(_req())
 
-    (stored,) = fake.objects.values()
+    (stored,) = _stored(audio_dir).values()
     assert b"Xing" in stored
     assert stored.endswith(audio_bytes)
 
@@ -387,25 +374,25 @@ async def test_unchanged_dream_reuses_the_stored_file(monkeypatch):
     second = await tts.generate_rehearsal(_req())
 
     assert second.cache_hit is True
-    assert second.audio_url == first.audio_url
+    assert second.audio_key == first.audio_key
     assert len(fake.speech_calls) == 1
 
 
 def test_cache_key_covers_model_voice_language_and_script():
     base = {"model": "m", "voice": "v"}
-    path = tts.object_path(_req(), "script", **base)
-    assert path == tts.object_path(_req(), "script", **base)  # stable
-    assert path.startswith("users/u-1/7/v2-en-")  # the prefix the URL refresh expects
+    key = tts.audio_key(_req(), "script", **base)
+    assert key == tts.audio_key(_req(), "script", **base)  # stable
+    assert key.startswith(f"users/{_USER}/7/en-")
     variants = [
-        tts.object_path(_req(), "script", model="m2", voice="v"),
-        tts.object_path(_req(), "script", model="m", voice="v2"),
-        tts.object_path(_req(lang=Language.DE), "script", **base),
-        tts.object_path(_req(), "script 2", **base),
+        tts.audio_key(_req(), "script", model="m2", voice="v"),
+        tts.audio_key(_req(), "script", model="m", voice="v2"),
+        tts.audio_key(_req(lang=Language.DE), "script", **base),
+        tts.audio_key(_req(), "script 2", **base),
     ]
-    assert len({path, *variants}) == 5
+    assert len({key, *variants}) == 5
 
 
-async def test_edited_dream_or_language_gets_a_new_file(monkeypatch, mistral_style):
+async def test_edited_dream_or_language_gets_a_new_file(monkeypatch, audio_dir, mistral_style):
     fake = _install(monkeypatch, _Fake())
     responses = [
         await tts.generate_rehearsal(_req()),
@@ -413,7 +400,8 @@ async def test_edited_dream_or_language_gets_a_new_file(monkeypatch, mistral_sty
         await tts.generate_rehearsal(_req(lang=Language.DE)),
     ]
 
-    assert len(fake.objects) == 3
+    # The edited English file replaced the first one; German is kept beside it.
+    assert set(_stored(audio_dir)) == {responses[1].audio_key, responses[2].audio_key}
     assert len(fake.speech_calls) == 3
     voices = ["gb_jane_neutral", "gb_jane_neutral", "voice_481"]
     assert [c["voice_id"] for c in fake.speech_calls] == voices
@@ -425,26 +413,53 @@ async def test_edited_dream_or_language_gets_a_new_file(monkeypatch, mistral_sty
     ("setting", "before", "after"),
     [("tts_voice_de", "gb_jane_neutral", "voice_481"), ("tts_model", "tts-a", "tts-b")],
 )
-async def test_new_voice_or_model_gets_a_new_file(monkeypatch, setting, before, after):
+async def test_new_voice_or_model_gets_a_new_file(monkeypatch, audio_dir, setting, before, after):
     """Dreams rendered in the old voice or model get new audio in the new one."""
     fake = _install(monkeypatch, _Fake())
     monkeypatch.setattr(tts.settings, setting, before)
-    await tts.generate_rehearsal(_req(lang=Language.DE))
+    first = await tts.generate_rehearsal(_req(lang=Language.DE))
     monkeypatch.setattr(tts.settings, setting, after)
     second = await tts.generate_rehearsal(_req(lang=Language.DE))
 
     assert second.cache_hit is False
-    assert len(fake.objects) == 2
+    assert second.audio_key != first.audio_key
+    assert set(_stored(audio_dir)) == {second.audio_key}  # the old rendering is pruned
     assert [c[setting.removeprefix("tts_").removesuffix("_de")] for c in fake.speech_calls] == [
         before,
         after,
     ]
 
 
-async def test_missing_storage_config_is_unavailable(monkeypatch):
-    monkeypatch.setattr(tts.settings, "supabase_service_role_key", "")
-    with pytest.raises(LlmUnavailableError, match="storage not configured"):
+async def test_a_failed_write_is_unavailable_without_the_path(monkeypatch, audio_dir):
+    _install(monkeypatch, _Fake())
+
+    def full(key, data):
+        raise OSError(28, "No space left on device", str(audio_dir / key))
+
+    monkeypatch.setattr(store, "write", full)
+    with pytest.raises(LlmUnavailableError, match="could not be stored") as exc_info:
         await tts.generate_rehearsal(_req())
+    assert "No space left on device" in str(exc_info.value)
+    assert str(_USER) not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("dream_id", "user_id"),
+    [("0", str(_USER)), ("07", str(_USER)), ("7/../8", str(_USER)), ("7", "u-1"), ("7", "../x")],
+)
+async def test_invalid_ids_are_refused_before_any_call(monkeypatch, audio_dir, dream_id, user_id):
+    fake = _install(monkeypatch, _Fake())
+    req = RehearsalRequest(
+        dream_id=dream_id, user_id=user_id, rewritten_dream="x", language=Language.EN
+    )
+    with pytest.raises(ValueError):
+        await tts.generate_rehearsal(req)
+    with pytest.raises(HTTPException) as exc_info:
+        await audio.rehearsal_generate(req)
+    assert exc_info.value.status_code == 400
+    assert fake.requests == []
+    assert _stored(audio_dir) == {}
 
 
 @pytest.mark.parametrize(

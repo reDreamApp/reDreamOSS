@@ -3,7 +3,7 @@
 Contract (what the backend's `ai_client.rehearsal_generate` calls, in-process
 via `api.audio.rehearsal_generate`):
     {dream_id, user_id, rewritten_dream, language}
-    -> {audio_url, script, duration_estimate, voice_id, cache_hit}
+    -> {audio_key, script, duration_estimate, voice_id, cache_hit}
 
 Speech comes from one provider, from configuration: ``POST
 {TTS_BASE_URL}/audio/speech`` (base URL and key fall back to LLM_*), in the
@@ -23,14 +23,14 @@ it. Without TTS_MODEL, or while a language has no voice, speech output is off
 before anything reaches this module.
 
 The MP3 gets a Xing header (`mp3.py`, so players report its real length) and
-goes straight to Supabase Storage with the service-role key; the backend only
-stores the signed URL and never sees the audio bytes.
+is written under AUDIO_DIR (`store.py`); the backend stores only the key and
+serves the file through a short-lived signed link.
 
-Object path: ``users/{user_id}/{dream_id}/v2-{language}-{hash}.mp3``. The hash
-covers model, voice, language and script, so an unchanged dream re-uses its
-file (``cache_hit``) and an edited dream, or one in a new voice or model, gets
-a new object. The per-user prefix is what the backend's GDPR purge deletes;
-the ``v2-`` prefix is what the backend's URL refresh expects of current files.
+Key: ``users/{user_id}/{dream_id}/{language}-{hash}.mp3``. The hash covers
+model, voice, language and script, so an unchanged dream re-uses its file
+(``cache_hit``) and an edited dream, or one in a new voice or model, gets a
+new file; the older file of that language is then deleted. The per-user
+folder is what the backend's GDPR purge deletes.
 
 Privacy: the rewritten dream (Art. 9 content) goes to the TTS provider; pick
 it for its retention terms.
@@ -44,12 +44,14 @@ import hashlib
 import logging
 import math
 from typing import Any
+from uuid import UUID
 
 import httpx
 
 from ..config import TTS_REQUIRED, settings
 from ..llm.base import LlmUnavailableError
 from ..models import Language, RehearsalRequest, RehearsalResponse
+from . import store
 from .mp3 import add_seek_header
 
 log = logging.getLogger(__name__)
@@ -67,33 +69,34 @@ _transport: httpx.AsyncBaseTransport | None = None
 
 
 async def generate_rehearsal(req: RehearsalRequest) -> RehearsalResponse:
-    """Render `req.rewritten_dream`, upload it, return a signed URL.
+    """Render `req.rewritten_dream`, store it, return its key.
 
     Raises LlmUnavailableError (-> AIServiceError in the backend) when speech
-    output is off, or the TTS provider or Storage is unavailable or not
-    configured.
+    output is off, the TTS provider is unavailable or the file cannot be
+    written; ValueError for an invalid dream_id or user_id.
     """
     if not settings.tts_enabled:
         raise LlmUnavailableError(f"speech output is off (set {TTS_REQUIRED})")
-    if not settings.supabase_url or not settings.supabase_service_role_key:
-        raise LlmUnavailableError("rehearsal storage not configured")
     voice = settings.tts_voice_for(req.language.value)
     model = settings.tts_model.strip()
 
     script = req.rewritten_dream.strip()
-    path = object_path(req, script, model=model, voice=voice)
+    key = audio_key(req, script, model=model, voice=voice)
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT, transport=_transport) as client:
-        storage = _Storage(client)
-        cache_hit = await storage.exists(path)
+    try:
+        cache_hit = await asyncio.to_thread(store.exists, key)
         if not cache_hit:
             audio = await synthesize(script, req.language)
             # Without it players misreport the length and seek inaccurately.
-            await storage.upload(path, add_seek_header(audio))
-        url = await storage.signed_url(path, settings.rehearsal_url_ttl_seconds)
+            await asyncio.to_thread(store.write, key, add_seek_header(audio))
+    except OSError as exc:
+        # strerror only: the exception's own text names the path.
+        raise LlmUnavailableError(
+            f"rehearsal audio could not be stored ({exc.strerror or type(exc).__name__})"
+        ) from None
 
     return RehearsalResponse(
-        audio_url=url,
+        audio_key=key,
         script=script,
         duration_estimate=estimate_duration(script),
         voice_id=voice,
@@ -101,13 +104,12 @@ async def generate_rehearsal(req: RehearsalRequest) -> RehearsalResponse:
     )
 
 
-def object_path(req: RehearsalRequest, script: str, *, model: str, voice: str) -> str:
-    """The Storage object for this rendering; a new model, voice, language or
-    script gives a new name."""
+def audio_key(req: RehearsalRequest, script: str, *, model: str, voice: str) -> str:
+    """The store key of this rendering; a new model, voice, language or script
+    gives a new name. Raises ValueError for an invalid dream_id or user_id."""
     lang = req.language.value
     digest = hashlib.sha256(f"{model}|{voice}|{lang}|{script}".encode()).hexdigest()
-    # Keep "v2-": the backend's URL refresh moves any other name as legacy.
-    return f"users/{req.user_id}/{req.dream_id}/v2-{lang}-{digest[:24]}.mp3"
+    return store.key_for(UUID(req.user_id), store.parse_dream_id(req.dream_id), lang, digest)
 
 
 def estimate_duration(script: str) -> str:
@@ -177,53 +179,3 @@ def _audio(r: httpx.Response, style: str) -> bytes:
     if not r.content:
         raise LlmUnavailableError("TTS returned no audio")
     return r.content
-
-
-class _Storage:
-    """The three Supabase Storage REST calls TTS needs."""
-
-    def __init__(self, client: httpx.AsyncClient) -> None:
-        self._client = client
-        self._base = settings.supabase_url.rstrip("/") + "/storage/v1"
-        self._bucket = settings.supabase_storage_bucket
-        key = settings.supabase_service_role_key
-        self._auth = {"Authorization": f"Bearer {key}", "apikey": key}
-
-    async def exists(self, path: str) -> bool:
-        folder, _, name = path.rpartition("/")
-        r = await self._client.post(
-            f"{self._base}/object/list/{self._bucket}",
-            headers=self._auth,
-            json={"prefix": folder, "search": name, "limit": 1},
-        )
-        _raise_for_storage(r, "list")
-        return any(item.get("name") == name for item in r.json())
-
-    async def upload(self, path: str, audio: bytes) -> None:
-        r = await self._client.post(
-            f"{self._base}/object/{self._bucket}/{path}",
-            headers={**self._auth, "Content-Type": "audio/mpeg", "x-upsert": "true"},
-            content=audio,
-        )
-        _raise_for_storage(r, "upload")
-
-    async def signed_url(self, path: str, ttl_seconds: int) -> str:
-        r = await self._client.post(
-            f"{self._base}/object/sign/{self._bucket}/{path}",
-            headers=self._auth,
-            json={"expiresIn": ttl_seconds},
-        )
-        _raise_for_storage(r, "sign")
-        payload = r.json()
-        signed = payload.get("signedURL") or payload.get("signedUrl")
-        if not isinstance(signed, str):
-            raise LlmUnavailableError("storage sign returned no URL")
-        # The AI container reaches Supabase on an internal address (kong);
-        # the app needs the public host.
-        public = (settings.supabase_public_url or settings.supabase_url).rstrip("/")
-        return f"{public}/storage/v1{signed}"
-
-
-def _raise_for_storage(r: httpx.Response, action: str) -> None:
-    if r.status_code >= 300:
-        raise LlmUnavailableError(f"storage {action} {r.status_code}: {r.text[:200]}")

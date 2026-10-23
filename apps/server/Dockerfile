@@ -21,6 +21,11 @@ COPY src ./src
 RUN uv sync --frozen --no-dev
 
 RUN useradd --no-create-home --uid 10001 appuser
+# Rehearsal MP3s (AUDIO_DIR's default, data/audio): the app user's alone;
+# mount a persistent volume here to keep them across container rebuilds.
+RUN mkdir -p /app/data/audio \
+    && chown -R appuser /app/data \
+    && chmod 700 /app/data /app/data/audio
 USER appuser
 
 # Run from the synced venv directly: `uv run` at runtime needs a writable

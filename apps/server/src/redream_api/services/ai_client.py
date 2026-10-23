@@ -11,7 +11,8 @@ Contract reference:
                       contract is documented in redream_ai's api/chat.py
 - safety_classify   : user text → risk classification (ADR 0005)
 - transcribe        : audio bytes → transcript (ADR 0010)
-- rehearsal_generate: dream → audio_url + script + duration
+- rehearsal_generate: dream → audio_key (the MP3 under AUDIO_DIR) + script +
+                      duration
 - stt_enabled / tts_enabled: whether each half of speech is configured; the
                       routes answer 503 voice_unavailable while it is off,
                       and the client never calls STT/TTS then
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # The budgets the HTTP boundary had (AI_REQUEST_TIMEOUT=90). Rehearsal gets
-# more: TTS has two 60s attempts plus the Storage calls.
+# more: TTS has two 60s attempts plus writing the file.
 _CHAT_TIMEOUT = 90.0
 _TRANSCRIBE_TIMEOUT = 90.0
 _REHEARSAL_TIMEOUT = 150.0

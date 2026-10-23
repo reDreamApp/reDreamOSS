@@ -26,10 +26,10 @@ Fully offline: in-memory SQLite (aiosqlite) with a `FakeAiClient` for `tests/api
 
 - `redream_api.api.v1` — feature packages, mounted at `/api/v1` (one folder each: `routes.py` + `schemas.py` + optional `service.py`).
 - `redream_api.db` — ORM models (one file per table, mirrors the Supabase migration) and repositories. **Routes go through repos, never raw model queries.**
-- `redream_api.services` — AI client (in-process, maps every AI failure to `AIServiceError`), Supabase Auth admin + Storage deletes (account deletion, GDPR purge).
+- `redream_api.services` — AI client (in-process, maps every AI failure to `AIServiceError`), Supabase Auth admin (account deletion), rehearsal-audio links (short-lived HMAC-signed, served by `GET /api/v1/audio/files/{key}`) and folder deletes (dream and account deletion, GDPR purge).
 - `redream_ai.api` — the plain async functions the AI client calls (`chat`, `chat_stream`, `safety_classify`, `transcribe`, `rehearsal_generate`).
 - `redream_ai.core` / `redream_ai.clinical_safety` — vendored IRT engine + `SafetyCritic` (excluded from lint/type rules). Chat/routing/safety-critic models come from `LLM_MODEL` / `LLM_SMALL_MODEL`.
 - `redream_ai.safety.classifier` — crisis classifier on `LLM_SAFETY_MODEL` (default `LLM_SMALL_MODEL`), no fallback; a failed check fails the chat turn.
-- `redream_ai.audio` — TTS + Supabase Storage upload, STT; one provider each from `STT_*` / `TTS_*` (see `.env.example`), off without a model (the routes answer 503 `voice_unavailable`).
+- `redream_ai.audio` — TTS + the local MP3 store under `AUDIO_DIR`, STT; one provider each from `STT_*` / `TTS_*` (see `.env.example`), off without a model (the routes answer 503 `voice_unavailable`).
 
 See [`../../docs/decisions/`](../../docs/decisions/README.md) for the binding architectural decisions.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -14,7 +15,7 @@ from ....db.models.user import User
 from ....db.repositories.consent_repo import ConsentRepo
 from ....db.repositories.user_repo import UserRepo
 from ....services.auth_service import delete_login
-from ....services.storage_service import delete_rehearsal_audio_for_user
+from ....services.rehearsal_audio import AUDIO_NOT_DELETED, delete_user_audio
 
 log = logging.getLogger(__name__)
 
@@ -94,15 +95,17 @@ async def delete_me(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete the account: app data, rehearsal audio, then the login.
+    """Delete the account: rehearsal audio, app data, then the login.
 
-    Deleting the `users` row cascades to dreams, chats and the rest. The
-    Supabase login goes last: if that fails the answer is 503 and the user is
-    left with an empty account they can sign in to and delete again.
+    The audio folder goes first: if that fails the answer is 503 and nothing
+    else is deleted. Deleting the `users` row cascades to dreams, chats and
+    the rest. The Supabase login goes last: if that fails the answer is 503
+    and the user is left with an empty account they can sign in to and
+    delete again.
     """
     user_id = user.id
+    await _delete_audio(user_id)
     await UserRepo(db).delete(user_id)
-    await delete_rehearsal_audio_for_user(user_id)
     if not await delete_login(user_id):
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -115,13 +118,22 @@ async def delete_my_data(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """GDPR purge: delete this user's data across Postgres + Storage.
+    """GDPR purge: delete this user's rehearsal audio, then their Postgres data.
 
     The login stays, so the user can keep using the app with an empty account.
 
-    The Storage purge is best-effort and logged — a Storage failure does not
-    prevent the Postgres deletion.
+    The audio folder goes first: if that fails the answer is 503 and the
+    database is left untouched, so the user can try again.
     """
     user_id = user.id
+    await _delete_audio(user_id)
     await UserRepo(db).delete(user_id)
-    await delete_rehearsal_audio_for_user(user_id)
+
+
+async def _delete_audio(user_id: UUID) -> None:
+    """Delete the user's audio folder; 503 when that fails."""
+    try:
+        await delete_user_audio(user_id)
+    except (OSError, ValueError) as exc:
+        log.error("rehearsal audio could not be deleted (%s)", type(exc).__name__)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, AUDIO_NOT_DELETED) from exc

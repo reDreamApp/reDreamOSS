@@ -41,10 +41,8 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
-    # Rehearsal-audio bucket targeted by the GDPR purge's storage cleanup
-    # (storage_service). Mirrors redream_ai's setting of the same name.
-    supabase_storage_bucket: str = "rehearsal-audio"
-    supabase_public_url: str = ""
+
+    # Lifetime of the signed rehearsal-audio link (services/audio_links).
     rehearsal_url_ttl_seconds: int = Field(default=300, ge=60, le=3600)
 
     # Supabase JWT verification

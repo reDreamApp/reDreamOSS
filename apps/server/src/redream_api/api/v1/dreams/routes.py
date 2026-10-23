@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from ....core.dependencies import get_current_user, get_db, require_consent
 from ....db.models.dream import Dream
@@ -18,8 +19,21 @@ from ....services.ai_client import (
     BaseAiClient,
     get_ai_client,
 )
-from ....services.storage_service import delete_rehearsal_audio_for_dream, refresh_rehearsal_url
+from ....services.audio_links import link_for
+from ....services.rehearsal_audio import (
+    AUDIO_NOT_DELETED,
+    AUDIO_NOT_READ,
+    audio_epoch,
+    audio_exists,
+    clear_rehearsal,
+    delete_dream_audio,
+    discard_dream_audio,
+    drop_if_stale,
+    owns_key,
+)
 from .schemas import DreamCreate, DreamOut, DreamUpdate, RehearsalGenerateRequest
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dreams", tags=["dreams"])
 
@@ -39,7 +53,8 @@ def _to_out(dream: Dream) -> DreamOut:
         image_url=dream.image_url,
         session_id=dream.session_id,
         source=dream.source,
-        rehearsal_audio_url=dream.rehearsal_audio_url,
+        # A fresh short-lived link on every answer; the row keeps the key.
+        rehearsal_audio_url=link_for(dream.rehearsal_audio_key),
         rehearsal_script=dream.rehearsal_script,
         rehearsal_duration=dream.rehearsal_duration,
         rehearsal_language=dream.rehearsal_language,
@@ -110,11 +125,8 @@ async def update_dream(
 
     # If the rewritten dream changed, the cached rehearsal audio is stale.
     if rewritten_changed:
-        dream.rehearsal_audio_url = None
-        dream.rehearsal_script = None
-        dream.rehearsal_duration = None
-        dream.rehearsal_language = None
-        dream.rehearsal_generated_at = None
+        await discard_dream_audio(user.id, dream.id)
+        clear_rehearsal(dream)
 
     saved = await repo.save(dream)
     return _to_out(saved)
@@ -130,8 +142,13 @@ async def delete_dream(
     dream = await repo.get_for_user(user.id, dream_id)
     if dream is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "dream not found")
+    # Audio first: a failure keeps the row, so the user can delete again.
+    try:
+        await delete_dream_audio(user.id, dream.id)
+    except (OSError, ValueError) as exc:
+        log.error("rehearsal audio could not be deleted (%s)", type(exc).__name__)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, AUDIO_NOT_DELETED) from exc
     await repo.delete(dream)
-    await delete_rehearsal_audio_for_dream(user.id, dream_id)
 
 
 @router.patch("/{dream_id}/favorite", response_model=DreamOut)
@@ -186,20 +203,27 @@ async def generate_rehearsal(
         raise HTTPException(status.HTTP_409_CONFLICT, "rewritten_dream is required for rehearsal")
 
     # Cache: if audio already exists and matches the requested language, reuse.
-    # This holds while speech output is off too: it re-signs stored audio
-    # (as GET /rehearsal-url does) and sends nothing to a TTS provider.
+    # This holds while speech output is off too: it signs a fresh link to the
+    # stored file (as GET /rehearsal-url does) and sends nothing to TTS.
     if (
-        dream.rehearsal_audio_url
+        dream.rehearsal_audio_key
         and dream.rehearsal_language == body.language
         and dream.rehearsal_generated_at is not None
     ):
-        return await _refresh_audio(db, dream)
+        if await _has_audio(dream):
+            return _to_out(dream)
+        # The file is gone: forget it, then render it anew (TTS permitting).
+        clear_rehearsal(dream)
+        await repo.save(dream)
 
     # New audio needs TTS; switched off (no TTS_MODEL or voice), say so
     # before any AI call.
     if not ai.tts_enabled:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, VOICE_UNAVAILABLE)
 
+    # Rendering takes long; the dream or account may be deleted (or the text
+    # edited) meanwhile. Then the file just written must go too.
+    started = audio_epoch(user.id, dream.id)
     try:
         result = await ai.rehearsal_generate(
             {
@@ -210,35 +234,47 @@ async def generate_rehearsal(
             }
         )
     except AIServiceError as exc:
+        await drop_if_stale(user.id, dream.id, started)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    if await drop_if_stale(user.id, dream.id, started):
+        raise HTTPException(status.HTTP_409_CONFLICT, "the dream changed meanwhile, try again")
 
-    dream.rehearsal_audio_url = result.get("audio_url")
+    key = result.get("audio_key")
+    if not owns_key(key, user.id, dream.id):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "rehearsal audio unavailable")
+    dream.rehearsal_audio_key = key
     dream.rehearsal_script = result.get("script")
     dream.rehearsal_duration = result.get("duration_estimate")
     dream.rehearsal_language = body.language
     dream.rehearsal_generated_at = datetime.now(UTC)
-    saved = await repo.save(dream)
+    try:
+        saved = await repo.save(dream)
+    except StaleDataError as exc:  # deleted after the check; its folder went with it
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "dream not found") from exc
     return _to_out(saved)
 
 
-async def _refresh_audio(db: AsyncSession, dream: Dream) -> DreamOut:
-    if not dream.rehearsal_audio_url:
-        raise HTTPException(404, "no rehearsal audio")
+async def _has_audio(dream: Dream) -> bool:
+    """audio_exists, with a file that cannot be checked as 503: the stored
+    key is kept rather than cleared on a passing disk error."""
     try:
-        dream.rehearsal_audio_url = await refresh_rehearsal_url(
-            dream.rehearsal_audio_url, dream.user_id, dream.id
-        )
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(502, "rehearsal audio unavailable") from exc
-    await db.commit()
-    return _to_out(dream)
+        return await audio_exists(dream)
+    except OSError as exc:
+        log.error("rehearsal audio could not be read (%s)", type(exc).__name__)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, AUDIO_NOT_READ) from exc
 
 
 @router.get("/{dream_id}/rehearsal-url", response_model=DreamOut)
 async def refresh_audio(
     dream_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> DreamOut:
-    dream = await DreamRepo(db).get_for_user(user.id, dream_id)
+    """The dream with a fresh link to its stored audio; 404 without one."""
+    repo = DreamRepo(db)
+    dream = await repo.get_for_user(user.id, dream_id)
     if dream is None:
         raise HTTPException(404, "dream not found")
-    return await _refresh_audio(db, dream)
+    if dream.rehearsal_audio_key and await _has_audio(dream):
+        return _to_out(dream)
+    if clear_rehearsal(dream):
+        await repo.save(dream)
+    raise HTTPException(404, "no rehearsal audio")

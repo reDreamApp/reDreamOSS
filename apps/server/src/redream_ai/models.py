@@ -193,19 +193,22 @@ class TranscribeResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# rehearsal_generate — Voxtral TTS + Supabase Storage upload
+# rehearsal_generate — TTS + the local audio store
 # ---------------------------------------------------------------------------
 
 
 class RehearsalRequest(BaseModel):
-    dream_id: str
-    user_id: str = Field(description="Owner; prefixes the Storage path for the GDPR purge.")
+    dream_id: str = Field(description="Positive integer as a decimal string; names the folder.")
+    user_id: str = Field(description="Owner's UUID; prefixes the store key for the GDPR purge.")
     rewritten_dream: str
     language: Language
 
 
 class RehearsalResponse(BaseModel):
-    audio_url: str = Field(description="Signed Supabase Storage URL for the generated MP3.")
+    audio_key: str = Field(
+        description="Store key of the MP3 under AUDIO_DIR: "
+        "users/{user_id}/{dream_id}/{language}-{hash}.mp3."
+    )
     script: str = Field(description="Text used as TTS input (may be post-processed).")
     duration_estimate: str = Field(description="mm:ss estimate of playback duration.")
     voice_id: str
