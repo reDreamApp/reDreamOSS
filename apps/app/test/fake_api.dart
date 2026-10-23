@@ -17,6 +17,9 @@ class FakeApi {
   final calls = <String>[];
   String? lastToken;
 
+  /// Held requests wait for it before they are answered.
+  Future<void>? delay;
+
   void on(String route, Handler handler) => routes[route] = handler;
 
   /// [tokenProvider] wins over the fixed [token].
@@ -25,13 +28,18 @@ class FakeApi {
     TokenProvider? tokenProvider,
     UnauthorizedHandler? onUnauthorized,
   }) => ApiClient(
-    baseUrl: 'http://fake',
+    baseUrl: () => 'http://fake',
     tokenProvider: tokenProvider ?? () => token,
     onUnauthorized: onUnauthorized,
-    httpClient: MockClient(_handle),
+    httpClient: httpClient(),
   );
 
+  /// The fake as a plain HTTP client, for code that is not an [ApiClient]
+  /// (the server probe).
+  http.Client httpClient() => MockClient(_handle);
+
   Future<http.Response> _handle(http.Request request) async {
+    if (delay case final delay?) await delay;
     if (offline) throw http.ClientException('offline', request.url);
     lastToken = request.headers['Authorization'];
     final key = '${request.method} ${request.url.path}';
@@ -117,6 +125,27 @@ SseBody streamTurn({
     },
   },
 ]);
+
+/// What `GET /api/v1/instance` answers.
+Map<String, Object?> instanceJson({
+  int apiVersion = 1,
+  String consentVersion = '2026-10-07',
+  String registration = 'invite',
+  String? name,
+  bool voice = true,
+}) => {
+  'name': name,
+  'api_version': apiVersion,
+  'consent_version': consentVersion,
+  'registration': registration,
+  'daily_ai_requests_per_user': 100,
+  'features': {
+    'chat': true,
+    'transcription': voice,
+    'rehearsal_audio': voice,
+  },
+  'operator': {'name': null, 'contact': null, 'privacy_url': null},
+};
 
 Map<String, Object?> consentJson({bool required = false}) => {
   'required_version': '2026-10-07',

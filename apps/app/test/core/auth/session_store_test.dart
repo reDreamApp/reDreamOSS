@@ -50,17 +50,6 @@ void main() {
     }
   });
 
-  test('the origin of a base URL keys the session', () {
-    expect(
-      StoredSession.originOf('https://dreams.example:8443/base/'),
-      'https://dreams.example:8443',
-    );
-    // Not a web address: no crash before the first frame.
-    for (final url in ['localhost:8000', 'dreams.example', 'http:///x', '']) {
-      expect(StoredSession.originOf(url), url);
-    }
-  });
-
   test('a write the storage does not keep throws an Exception', () async {
     FlutterSecureStorage.setMockInitialValues(DroppedWrites());
     await expectLater(

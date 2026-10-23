@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -15,17 +16,21 @@ typedef UnauthorizedHandler = Future<bool> Function(String? usedToken);
 /// Calls that wait on the LLM: the backend allows the AI service 90s.
 const aiTimeout = Duration(seconds: 100);
 
-/// JSON client for `apps/server`. Adds the bearer token, maps transport
-/// failures to [NetworkException], non-2xx to [ApiException], and on a 401
-/// asks [UnauthorizedHandler] whether to retry once.
+/// Files the server links to (rehearsal audio, a few MB).
+const downloadTimeout = Duration(seconds: 120);
+
+/// JSON client for `apps/server`. Reads the server's address on every
+/// request, adds the bearer token, maps transport failures to
+/// [NetworkException], non-2xx to [ApiException], and on a 401 asks
+/// [UnauthorizedHandler] whether to retry once.
 class ApiClient {
   ApiClient({
-    required String baseUrl,
+    required String Function() baseUrl,
     required TokenProvider tokenProvider,
     UnauthorizedHandler? onUnauthorized,
     http.Client? httpClient,
     Duration timeout = const Duration(seconds: 30),
-  }) : _baseUrl = baseUrl.replaceAll(RegExp(r'/+$'), ''),
+  }) : _baseUrl = baseUrl,
        _tokenProvider = tokenProvider,
        _onUnauthorized = onUnauthorized,
        _http = httpClient ?? http.Client(),
@@ -34,7 +39,7 @@ class ApiClient {
   /// A 401 here is a wrong password, not an ended session.
   static const _signInPaths = {'/api/v1/auth/login', '/api/v1/auth/register'};
 
-  final String _baseUrl;
+  final String Function() _baseUrl;
   final TokenProvider _tokenProvider;
   final UnauthorizedHandler? _onUnauthorized;
   final http.Client _http;
@@ -60,6 +65,40 @@ class ApiClient {
       _map(_request('PATCH', path, body: body));
 
   Future<void> delete(String path) => _request('DELETE', path);
+
+  /// A link the server sent, made absolute. A server-relative link is
+  /// joined to the address as text, like every request: [Uri.resolve] would
+  /// drop a sub-path such as `https://host/dreams`. Absolute http(s) links
+  /// stay as they are, except an http link from an https server.
+  Uri resolve(String link) {
+    final uri = Uri.tryParse(link);
+    if (uri != null &&
+        (uri.isScheme('http') || uri.isScheme('https')) &&
+        uri.host.isNotEmpty) {
+      if (uri.isScheme('http') && _uri('/', null).isScheme('https')) {
+        throw NetworkException('insecure link');
+      }
+      return uri;
+    }
+    return _uri(link, null);
+  }
+
+  /// Downloads a file the server linked to. No token is sent: those links
+  /// are signed and work without one, and an absolute link may point
+  /// elsewhere. Redirects are not followed, so https stays https.
+  Future<Uint8List> getBytes(Uri url) async {
+    final request = http.Request('GET', url)..followRedirects = false;
+    final res = await _guard(
+      () => _http
+          .send(request)
+          .then(http.Response.fromStream)
+          .timeout(downloadTimeout),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(res.statusCode, _errorMessage(res.body));
+    }
+    return res.bodyBytes;
+  }
 
   /// POSTs [body] to a `text/event-stream` endpoint and yields the response
   /// as utf8 text chunks. Errors before the stream starts surface as the same
@@ -113,10 +152,12 @@ class ApiClient {
     Map<String, String>? query,
     Duration? timeout,
   }) async {
-    final uri = _uri(path, query);
+    // The address is read with the token, also on the retry: both belong
+    // to the server in use at that moment.
     final res = await _authorized(
       path,
-      (token) => _send(method, uri, body, timeout ?? _timeout, token),
+      (token) =>
+          _send(method, _uri(path, query), body, timeout ?? _timeout, token),
     );
     return _decode(res);
   }
@@ -145,9 +186,15 @@ class ApiClient {
     return retried;
   }
 
-  Uri _uri(String path, Map<String, String>? query) => Uri.parse(
-    '$_baseUrl${path.startsWith('/') ? '' : '/'}$path',
-  ).replace(queryParameters: query == null || query.isEmpty ? null : query);
+  /// Without an address there is no server to reach: that fails like being
+  /// offline. A query already in [path] is kept when [query] is null.
+  Uri _uri(String path, Map<String, String>? query) {
+    final base = _baseUrl().replaceAll(RegExp(r'/+$'), '');
+    if (base.isEmpty) throw NetworkException('no server address');
+    return Uri.parse(
+      '$base${path.startsWith('/') ? '' : '/'}$path',
+    ).replace(queryParameters: query == null || query.isEmpty ? null : query);
+  }
 
   Map<String, String> _headers(String? token, {bool json = false}) => {
     'Accept': 'application/json',

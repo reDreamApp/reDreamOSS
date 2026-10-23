@@ -44,7 +44,7 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Local secrets — only .env.example is committed.
+# Local secrets; the app itself reads no .env.
 .env
 
 # FVM

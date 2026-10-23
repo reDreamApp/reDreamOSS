@@ -11,7 +11,6 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter:
     sdk: flutter
-  flutter_dotenv: ^6.0.0
   flutter_local_notifications: ^19.4.2
   flutter_localizations:
     sdk: flutter
@@ -41,7 +40,6 @@ flutter:
   uses-material-design: true
   generate: true
   assets:
-    - .env
     - assets/images/
 
 # Onboarding pictures: SVG sources in assets/source/onboarding/ (not bundled);

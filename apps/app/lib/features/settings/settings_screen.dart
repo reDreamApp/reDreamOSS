@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
 import 'package:redream_app/core/utils/errors.dart';
@@ -13,6 +14,7 @@ import 'package:redream_app/core/widgets/icon_row.dart';
 import 'package:redream_app/core/widgets/theme_mode_toggle.dart';
 import 'package:redream_app/features/consent/consent_state.dart';
 import 'package:redream_app/features/reminders/reminder_tile.dart';
+import 'package:redream_app/features/server/server_gate.dart';
 import 'package:redream_app/features/settings/change_email_screen.dart';
 import 'package:redream_app/features/settings/change_password_screen.dart';
 import 'package:redream_app/features/settings/contact_support_screen.dart';
@@ -70,6 +72,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final auth = context.read<AuthService>();
     Navigator.of(context).popUntil((r) => r.isFirst);
     await auth.signOut();
+  }
+
+  Future<void> _changeServer() async {
+    final l10n = AppLocalizations.of(context)!;
+    final ok = await confirmDialog(
+      context,
+      title: l10n.changeServerTitle,
+      body: l10n.changeServerBody,
+      confirmLabel: l10n.serverChange,
+      cancelLabel: l10n.cancel,
+    );
+    if (!ok || !mounted) return;
+    final change = changeServer(context);
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    await change;
   }
 
   /// Withdrawal is as easy as granting (Art. 7(3)): the consent gate
@@ -209,6 +226,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   trailing: const ThemeModeToggle(),
                 ),
                 const ReminderTile(color: violet),
+                IconRow(
+                  icon: Icons.dns_outlined,
+                  color: violet,
+                  title: l10n.settingsServer,
+                  subtitle: context.select<ServerConfig, String>(
+                    (s) => s.address,
+                  ),
+                  trailing: const RowChevron(),
+                  onTap: _changeServer,
+                ),
               ],
             ),
             const SizedBox(height: 16),

@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:redream_app/core/api/api_client.dart';
 import 'package:redream_app/core/api/api_exception.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
@@ -7,21 +10,19 @@ import 'package:redream_app/core/auth/session_store.dart';
 /// The session is held in memory, so the getters stay synchronous, and kept
 /// in [SessionStore] across launches.
 class TokenAuthService extends AuthService {
-  TokenAuthService(
-    this._api,
-    this._store,
-    StoredSession? initial,
-    String serverOrigin,
-  ) : _server = serverOrigin,
-      _session = initial?.server == serverOrigin ? initial : null {
+  TokenAuthService(this._api, this._store, StoredSession? initial, this._server)
+    : _session = initial?.server == _server.value ? initial : null {
     // A token is never sent to a host it was not issued by.
     if (initial != null && _session == null) _store.clear().ignore();
     if (_session case final session?) _owners[session.token] = session.userId;
+    _server.addListener(_serverChanged);
   }
 
   final ApiClient _api;
   final SessionStore _store;
-  final String _server;
+
+  /// Address of the server in use; a session for another one is dropped.
+  final ValueListenable<String> _server;
   StoredSession? _session;
 
   /// The user behind every token held since launch, so a late 401 is only
@@ -60,15 +61,18 @@ class TokenAuthService extends AuthService {
     });
   }
 
+  /// The logout request leaves with the token and the address before the
+  /// session ends here, so a server that is down never holds the sign-out
+  /// up. Best effort: after account deletion the token is already revoked.
   @override
   Future<void> signOut() async {
-    if (_session != null) {
-      // Best effort: after account deletion the token is already revoked.
-      try {
-        await _api.post('/api/v1/auth/logout', null, _logoutTimeout);
-      } on Exception catch (_) {}
-    }
+    final logout = _session == null
+        ? null
+        : _api
+              .post('/api/v1/auth/logout', null, _logoutTimeout)
+              .then<void>((_) {}, onError: (Object _) {});
     await _clear();
+    await logout;
   }
 
   /// A request that started before a sign-out and a new sign-in is retried
@@ -125,26 +129,55 @@ class TokenAuthService extends AuthService {
     } on Exception catch (_) {}
   }
 
+  /// A sign-in answered after the server was changed is dropped: its token
+  /// belongs to the server before.
   Future<void> _start(
     String path,
     Map<String, Object?> body, {
     bool login = false,
   }) async {
+    final server = _server.value;
     final res = await _call(() => _api.post(path, body), login: login);
+    if (_server.value != server) return;
     final user = res['user'] as Map<String, dynamic>;
     await _save(
       StoredSession(
         token: res['token'] as String,
         userId: user['id'] as String,
         email: user['email'] as String,
-        server: _server,
+        server: server,
         expiresAt: DateTime.tryParse(res['expires_at'] as String? ?? ''),
       ),
     );
   }
 
+  /// The address changed without a sign-out first: the session stays with
+  /// its server, here it ends. Tokens of the server before are never retried
+  /// on the next one, even for a user with the same id.
+  void _serverChanged() {
+    _owners.clear();
+    if (_session case final session?) {
+      if (session.server == _server.value) {
+        _owners[session.token] = session.userId;
+      } else {
+        unawaited(_clear());
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _server.removeListener(_serverChanged);
+    super.dispose();
+  }
+
   Future<void> _save(StoredSession session) async {
     await _store.write(session);
+    // The server changed while the keychain was writing.
+    if (session.server != _server.value) {
+      await _store.clear();
+      return;
+    }
     _owners[session.token] = session.userId;
     _session = session;
     notifyListeners();

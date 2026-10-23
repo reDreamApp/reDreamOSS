@@ -2,13 +2,13 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/app.dart';
 import 'package:redream_app/core/app_services.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/storage/local_store.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
@@ -16,6 +16,7 @@ import 'package:redream_app/core/widgets/brand_logo.dart';
 import 'package:redream_app/core/widgets/theme_mode_toggle.dart';
 import 'package:redream_app/features/chat/stage_indicator.dart';
 import 'package:redream_app/features/chat/voice_recorder.dart';
+import 'package:redream_app/features/consent/consent_service.dart';
 import 'package:redream_app/features/journal/dream_detail_screen.dart';
 import 'package:redream_app/features/reminders/notification_service.dart';
 import 'package:redream_app/features/settings/profile.dart';
@@ -50,10 +51,14 @@ class _FakeRecorder implements IVoiceRecorder {
   Future<void> dispose() async {}
 }
 
+/// The app on the fake server at `http://fake`, connected unless
+/// [connected] is false; [instance] is what the server says about itself.
 Future<(Widget, FakeApi, AppSettings)> _app({
   FakeAuth? auth,
   bool consentRequired = false,
   IVoiceRecorder? recorder,
+  bool connected = true,
+  Map<String, Object?>? instance,
 }) async {
   var needsConsent = consentRequired;
   FlutterSecureStorage.setMockInitialValues({});
@@ -61,6 +66,7 @@ Future<(Widget, FakeApi, AppSettings)> _app({
   final store = await LocalStore.open();
   final settings = AppSettings(store, platformLanguage: 'en');
   final api = FakeApi()
+    ..on('GET /api/v1/instance', (_, _) => instance ?? instanceJson())
     ..on(
       'GET /api/v1/dreams',
       (_, _) => [
@@ -123,6 +129,15 @@ Future<(Widget, FakeApi, AppSettings)> _app({
               reply: 'Tell me more about it.',
             ),
     );
+  final server = ServerConfig(
+    store,
+    consentVersion: consentTextVersion,
+    httpClient: api.httpClient(),
+  );
+  if (connected) {
+    await server.connect('http://fake');
+    api.calls.clear();
+  }
   final services = AppServices(
     api: api.client(token: 'test'),
     store: store,
@@ -131,6 +146,7 @@ Future<(Widget, FakeApi, AppSettings)> _app({
   );
   final app = MultiProvider(
     providers: [
+      ChangeNotifierProvider<ServerConfig>.value(value: server),
       ChangeNotifierProvider<AuthService>.value(value: auth ?? FakeAuth()),
       ChangeNotifierProvider<AppSettings>.value(value: settings),
       Provider<AppServices>.value(value: services),
@@ -319,6 +335,136 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  group('server address', () {
+    testWidgets('a first start asks for the server, then signs in there', (
+      tester,
+    ) async {
+      final (app, api, _) = await _app(auth: FakeAuth(), connected: false);
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      expect(find.text(_en.serverAddressLabel), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Sign in'), findsNothing);
+      await tester.enterText(find.byType(TextField), 'http://fake/');
+      await tester.tap(find.widgetWithText(FilledButton, _en.serverConnect));
+      await _settle(tester);
+
+      expect(api.calls, ['GET /api/v1/instance']);
+      expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
+      expect(find.text('Server: http://fake'), findsOneWidget);
+    });
+
+    testWidgets('a server on another version is refused with the reason', (
+      tester,
+    ) async {
+      final (app, _, _) = await _app(
+        auth: FakeAuth(),
+        connected: false,
+        instance: instanceJson(apiVersion: 2),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.enterText(find.byType(TextField), 'http://fake');
+      await tester.tap(find.widgetWithText(FilledButton, _en.serverConnect));
+      await _settle(tester);
+
+      expect(find.text(_en.serverAppOutdated), findsOneWidget);
+      expect(find.text(_en.serverAddressLabel), findsOneWidget);
+    });
+
+    testWidgets('the sign-in screen can go back to the address', (
+      tester,
+    ) async {
+      final (app, _, _) = await _app(auth: FakeAuth());
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.text(_en.serverChange));
+      await _settle(tester);
+
+      expect(find.text(_en.serverAddressLabel), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'http://fake',
+      );
+    });
+
+    testWidgets('changing the server in settings signs out first', (
+      tester,
+    ) async {
+      final auth = FakeAuth(userId: 'user-1', email: 'me@example.com');
+      final (app, _, _) = await _app(auth: auth);
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      final server = tester
+          .element(find.byType(MaterialApp))
+          .read<ServerConfig>();
+      bool? connectedAtSignOut;
+      auth.onSignOut = () => connectedAtSignOut = server.isConnected;
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await _settle(tester);
+      expect(find.text('http://fake'), findsOneWidget);
+      await tester.tap(find.text(_en.settingsServer));
+      await _settle(tester);
+      expect(find.text(_en.changeServerBody), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, _en.serverChange));
+      await _settle(tester);
+
+      expect(connectedAtSignOut, isTrue);
+      expect(auth.isSignedIn, isFalse);
+      expect(find.text(_en.serverAddressLabel), findsOneWidget);
+      expect(server.isConnected, isFalse);
+    });
+
+    testWidgets('sign-up asks for an invite code only where one is needed', (
+      tester,
+    ) async {
+      final auth = FakeAuth();
+      final (app, _, _) = await _app(
+        auth: auth,
+        instance: instanceJson(registration: 'open'),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.text("Don't have an account? Sign up"));
+      await _settle(tester);
+      expect(find.text(_en.signUpInviteCode), findsNothing);
+      expect(find.byType(TextFormField), findsNWidgets(3));
+
+      // The server became invite-only since its info was read.
+      auth.error = const AuthFailure(AuthFailureKind.inviteInvalid);
+      await tester.enterText(find.byType(TextFormField).at(0), 'a@example.com');
+      await tester.enterText(find.byType(TextFormField).at(1), 'a-password');
+      await tester.enterText(find.byType(TextFormField).at(2), 'a-password');
+      await tester.tap(find.widgetWithText(FilledButton, 'Sign up'));
+      await _settle(tester);
+
+      expect(find.text(_en.authInviteRequired), findsOneWidget);
+      expect(find.text(_en.signUpInviteCode), findsOneWidget);
+    });
+
+    testWidgets('a closed server offers no sign-up', (tester) async {
+      final (app, _, _) = await _app(
+        auth: FakeAuth(),
+        instance: instanceJson(registration: 'closed'),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
+      expect(find.text("Don't have an account? Sign up"), findsNothing);
+    });
   });
 
   testWidgets('forgot password says who can reset it', (tester) async {
@@ -642,7 +788,6 @@ void main() {
   });
 
   testWidgets('back leads from every other tab to Home', (tester) async {
-    dotenv.loadFromString(isOptional: true);
     final (app, _, _) = await _app(
       auth: FakeAuth(userId: 'user-1', email: 'me@example.com'),
     );
@@ -921,8 +1066,6 @@ void main() {
   testWidgets('Learning is the last tab and its back arrow returns', (
     tester,
   ) async {
-    // Learn reads the website's address from the app's env file.
-    dotenv.loadFromString(isOptional: true);
     final (app, _, _) = await _app(auth: FakeAuth(userId: 'user-1'));
     _tallPhone(tester);
     await tester.pumpWidget(app);

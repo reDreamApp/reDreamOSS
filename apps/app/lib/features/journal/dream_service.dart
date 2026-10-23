@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:redream_app/core/api/api_client.dart';
 import 'package:redream_app/features/journal/dream.dart';
 
@@ -44,4 +46,12 @@ class DreamService {
           'language': language,
         }, rehearsalTimeout),
       );
+
+  /// A rehearsal link as the player needs it: the server sends it relative
+  /// to its own address.
+  Uri audioUri(String link) => _api.resolve(link);
+
+  /// The audio behind a rehearsal link (signed, so fetched without a token).
+  Future<Uint8List> downloadAudio(String link) =>
+      _api.getBytes(_api.resolve(link));
 }

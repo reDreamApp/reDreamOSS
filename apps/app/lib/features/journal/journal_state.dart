@@ -259,6 +259,11 @@ class JournalState extends ChangeNotifier {
     return updated;
   }
 
+  Uri rehearsalUri(String link) => _service.audioUri(link);
+
+  Future<Uint8List> downloadRehearsal(String link) =>
+      _service.downloadAudio(link);
+
   Future<Dream> generateRehearsal(
     Dream dream, {
     required String language,

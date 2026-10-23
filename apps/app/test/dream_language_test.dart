@@ -120,6 +120,21 @@ void main() {
     expect(body, {'language': 'de'});
   });
 
+  test('rehearsal audio is fetched at the server-relative link', () async {
+    final api = FakeApi()
+      ..on('GET /api/v1/audio/files/{key}', (request, _) {
+        expect(request.url.query, 'exp=1&sig=abc');
+        expect(request.headers.containsKey('Authorization'), isFalse);
+        return {'mp3': true};
+      });
+    final service = DreamService(api.client(token: 'test'));
+    const link = '/api/v1/audio/files/de-1.mp3?exp=1&sig=abc';
+
+    expect(service.audioUri(link).toString(), 'http://fake$link');
+    expect(await service.downloadAudio(link), isNotEmpty);
+    expect(api.calls, ['GET /api/v1/audio/files/de-1.mp3']);
+  });
+
   group('the audio rehearsal screen', () {
     late Directory support;
     const pathProvider = MethodChannel('plugins.flutter.io/path_provider');

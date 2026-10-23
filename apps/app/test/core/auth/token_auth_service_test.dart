@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -48,15 +49,23 @@ void main() {
   });
 
   /// The service wired as in main.dart: the client reads its token and
-  /// reports 401s back to it.
-  TokenAuthService service({StoredSession? initial, String server = _server}) {
+  /// reports 401s back to it; [origin] stands in for the server address.
+  TokenAuthService service({
+    StoredSession? initial,
+    String server = _server,
+    ValueNotifier<String>? origin,
+  }) {
     late final TokenAuthService auth;
     final client = api.client(
       tokenProvider: () => auth.accessToken,
       onUnauthorized: (token) => auth.onUnauthorized(token),
     );
-    return auth = TokenAuthService(client, store, initial, server)
-      ..addListener(() => notified++);
+    return auth = TokenAuthService(
+      client,
+      store,
+      initial,
+      origin ?? ValueNotifier(server),
+    )..addListener(() => notified++);
   }
 
   Future<AuthFailure> failure(Future<void> call) async {
@@ -416,7 +425,7 @@ void main() {
         tokenProvider: () => auth.accessToken,
         onUnauthorized: (token) => auth.onUnauthorized(token),
       );
-      auth = TokenAuthService(client, store, _stored(), _server);
+      auth = TokenAuthService(client, store, _stored(), ValueNotifier(_server));
 
       await expectLater(
         client.getList('/api/v1/dreams'),
@@ -492,7 +501,7 @@ void main() {
 
         late final TokenAuthService auth;
         final client = ApiClient(
-          baseUrl: _server,
+          baseUrl: () => _server,
           tokenProvider: () => auth.accessToken,
           onUnauthorized: (token) => auth.onUnauthorized(token),
           httpClient: MockClient(handle),
@@ -506,7 +515,7 @@ void main() {
             email: 'a@example.com',
             server: _server,
           ),
-          _server,
+          ValueNotifier(_server),
         );
 
         /// Saves a dream while its sender signs out and [email] signs in.
@@ -545,6 +554,68 @@ void main() {
         expect(saved, {'user-b': 1});
       },
     );
+
+    test('changing the server ends the session it belongs to', () async {
+      await store.write(_stored());
+      final origin = ValueNotifier(_server);
+      final auth = service(initial: _stored(), origin: origin);
+      expect(auth.isSignedIn, isTrue);
+
+      origin.value = '';
+      await pumpEventQueue();
+
+      expect(auth.isSignedIn, isFalse);
+      expect(auth.accessToken, isNull);
+      expect(await store.read(), isNull);
+    });
+
+    test("the server before's tokens are never retried on the next", () async {
+      await store.write(_stored());
+      final origin = ValueNotifier(_server);
+      api.on('POST /api/v1/auth/login', (_, _) => _authJson('rdo_new'));
+      final auth = service(initial: _stored(), origin: origin);
+
+      // Same user id on another server (a moved or cloned instance).
+      origin.value = 'http://fake/other';
+      await auth.signIn(email: 'me@example.com', password: 'pw');
+
+      expect(auth.accessToken, 'rdo_new');
+      expect(await auth.onUnauthorized('rdo_old'), isFalse);
+      expect(auth.accessToken, 'rdo_new');
+    });
+
+    test('signing out does not wait for a server that is down', () async {
+      await store.write(_stored());
+      final answer = Completer<void>();
+      api.on('POST /api/v1/auth/logout', (_, _) => null);
+      final auth = service(initial: _stored());
+      api.delay = answer.future;
+
+      final signOut = auth.signOut();
+
+      expect(auth.isSignedIn, isFalse);
+      answer.complete();
+      await signOut;
+      expect(api.calls, ['POST /api/v1/auth/logout']);
+      expect(await store.read(), isNull);
+    });
+
+    test('a sign-in answered after a server change is dropped', () async {
+      final answer = Completer<void>();
+      final origin = ValueNotifier(_server);
+      api.on('POST /api/v1/auth/login', (_, _) => _authJson('rdo_new'));
+      final auth = service(origin: origin);
+      api.delay = answer.future;
+
+      final signIn = auth.signIn(email: 'me@example.com', password: 'pw');
+      await pumpEventQueue();
+      origin.value = 'https://other.example';
+      answer.complete();
+      await signIn;
+
+      expect(auth.isSignedIn, isFalse);
+      expect(await store.read(), isNull);
+    });
 
     test('a session for another server is dropped, never sent', () async {
       await store.write(_stored(server: 'https://other.example'));

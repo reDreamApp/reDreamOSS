@@ -41,19 +41,10 @@ class StoredSession {
   final String userId;
   final String email;
 
-  /// Origin of the API the token belongs to; it is never sent anywhere else.
+  /// Address of the server the token belongs to (as ServerConfig keeps
+  /// it); it is never sent anywhere else.
   final String server;
   final DateTime? expiresAt;
-
-  /// The origin a session for [baseUrl] is stored under. A URL without an
-  /// http(s) host keys by itself instead of failing startup.
-  static String originOf(String baseUrl) {
-    final uri = Uri.tryParse(baseUrl);
-    if (uri == null || !(uri.isScheme('http') || uri.isScheme('https'))) {
-      return baseUrl;
-    }
-    return uri.host.isEmpty ? baseUrl : uri.origin;
-  }
 
   StoredSession withEmail(String email) => StoredSession(
     token: token,

@@ -9,8 +9,7 @@ class Article {
     required this.urls,
   });
 
-  /// The team's study in Somnologie (2026). It is a journal article, not a
-  /// post on the website, so the website's list does not carry it.
+  /// The team's study in Somnologie (2026), the Learning tab's article.
   factory Article.ownStudy(AppLocalizations l10n) => Article(
     slug: 'study-somnologie-2026',
     title: l10n.learnStudyTitle,
@@ -20,12 +19,9 @@ class Article {
     },
   );
 
-  /// Pictures for the articles the app knows, by slug; any other post of
-  /// the website shows none.
+  /// Pictures by slug; an article without one shows none.
   static const _images = {
     'study-somnologie-2026': 'assets/images/learn_study.webp',
-    'blog_creativity': 'assets/images/learn_creativity.webp',
-    'blog_sleep_better': 'assets/images/learn_sleep.webp',
   };
 
   final String slug;

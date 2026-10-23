@@ -49,8 +49,8 @@
   "signUpAgeNote": "By signing up you confirm that you are 18 or older.",
   "signUpSwitch": "Already have an account? Sign in",
   "passwordsDoNotMatch": "Passwords do not match",
-  "signUpInviteCode": "Invite code (optional)",
-  "signUpInviteCodeHint": "Only needed if this server asks for one",
+  "signUpInviteCode": "Invite code",
+  "signUpInviteCodeHint": "You get it from whoever runs this server",
   "authEmailTaken": "This email address is already in use.",
   "authRegistrationClosed": "This server is not taking new accounts right now. Please ask whoever runs it for access.",
   "authInviteInvalid": "This invite code is not valid. Please check it and try again.",
@@ -70,6 +70,27 @@
   "forgotPasswordTitle": "Forgot password",
   "forgotPasswordBody": "This server does not send password reset emails. Please ask whoever runs this server to reset your password for you. Then sign in with your new password.",
   "backToSignIn": "Back to sign in",
+  "serverAddressLabel": "Server address",
+  "serverAddressHint": "https://dreams.example.org",
+  "serverAddressHelp": "Ask whoever runs your server for its address.",
+  "serverConnect": "Connect",
+  "serverInvalidAddress": "Please enter a web address, for example https://dreams.example.org.",
+  "serverHttpsRequired": "The address must start with https://.",
+  "serverUnreachable": "This server cannot be reached. Please check the address and your connection.",
+  "serverNotFound": "There is no compatible server at this address.",
+  "serverAppOutdated": "This server needs a newer version of the app. Please update the app.",
+  "serverOutdated": "This server runs an older version than this app. Please ask whoever runs it to update it.",
+  "signInServer": "Server: {address}",
+  "@signInServer": {
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "serverChange": "Change server",
+  "changeServerTitle": "Change server?",
+  "changeServerBody": "You will be signed out. Your journal stays on this server; sign in to it again to see it.",
   "validationRequired": "{field} is required",
   "@validationRequired": {
     "placeholders": {
@@ -414,6 +435,7 @@
   "languageEnglish": "English",
   "languageGerman": "German",
   "settingsTheme": "Theme",
+  "settingsServer": "Server",
   "settingsThemeSubtitle": "Dark / light mode",
   "settingsPrivacySection": "Privacy & Security",
   "settingsExport": "Export my data",
@@ -522,7 +544,6 @@
   "privacyS10Title": "Changes to This Policy",
   "privacyS10Body": "We may update this policy from time to time. The current version is always available in the app and on our website.",
   "learnTitle": "Learning",
-  "learnLoadFailed": "Unable to load articles right now.",
   "learnStudyTitle": "Our study: rewriting nightmares with a web application",
   "learnStudyExcerpt": "A randomized controlled trial by Voss, Peters, Pipa and Lüth, published in the journal Somnologie in 2026. It examined the web application DreamMend. reDreamAI itself is not therapy and does not treat any condition.",
   "learnOpenArticle": "Open the article",

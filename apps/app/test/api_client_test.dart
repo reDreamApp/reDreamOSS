@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:redream_app/core/api/api_client.dart';
 import 'package:redream_app/core/api/api_exception.dart';
 
 import 'fake_api.dart';
@@ -192,5 +194,132 @@ void main() {
     final api = FakeApi()..on('DELETE /api/v1/thing/1', (_, _) => null);
     await api.client().delete('/api/v1/thing/1');
     expect(api.calls, ['DELETE /api/v1/thing/1']);
+  });
+
+  group('server address', () {
+    /// A client on [base] that records every request it sends.
+    (ApiClient, List<http.Request>) client(String Function() base) {
+      final sent = <http.Request>[];
+      final api = ApiClient(
+        baseUrl: base,
+        tokenProvider: () => 't0k',
+        httpClient: MockClient((request) async {
+          sent.add(request);
+          return request.url.path.contains('/audio/')
+              ? http.Response.bytes([1, 2, 3], 200)
+              : http.Response('', 204);
+        }),
+      );
+      return (api, sent);
+    }
+
+    test('is read on every request', () async {
+      var base = 'http://one.example';
+      final (api, sent) = client(() => base);
+
+      await api.delete('/api/v1/x');
+      base = 'https://two.example/sub/';
+      await api.delete('/api/v1/x');
+
+      expect(sent.map((r) => r.url.toString()), [
+        'http://one.example/api/v1/x',
+        'https://two.example/sub/api/v1/x',
+      ]);
+    });
+
+    test('without one nothing is sent and it fails like offline', () async {
+      final (api, sent) = client(() => '');
+
+      await expectLater(api.get('/api/v1/x'), throwsA(isA<NetworkException>()));
+      expect(() => api.resolve('/a'), throwsA(isA<NetworkException>()));
+      expect(sent, isEmpty);
+    });
+
+    test('server links are joined to the address, sub-path and query kept', () {
+      final (api, _) = client(() => 'https://host.example/dreams');
+
+      expect(
+        api.resolve('/api/v1/audio/files/k.mp3?exp=1&sig=a%2Fb').toString(),
+        'https://host.example/dreams/api/v1/audio/files/k.mp3?exp=1&sig=a%2Fb',
+      );
+      expect(
+        api.resolve('https://cdn.example/a.mp3').toString(),
+        'https://cdn.example/a.mp3',
+      );
+    });
+
+    test('a retry goes to the address in use when it is sent', () async {
+      var base = 'http://one.example';
+      final urls = <String>[];
+      final api = ApiClient(
+        baseUrl: () => base,
+        tokenProvider: () => base == 'http://one.example' ? 'tA' : 'tB',
+        onUnauthorized: (_) async {
+          base = 'http://two.example';
+          return true;
+        },
+        httpClient: MockClient((request) async {
+          urls.add('${request.url} ${request.headers['Authorization']}');
+          return urls.length == 1
+              ? http.Response('{"detail": "not authenticated"}', 401)
+              : http.Response('', 204);
+        }),
+      );
+
+      await api.delete('/api/v1/x');
+
+      expect(urls, [
+        'http://one.example/api/v1/x Bearer tA',
+        'http://two.example/api/v1/x Bearer tB',
+      ]);
+    });
+
+    test('an https server cannot hand out an http link', () {
+      final (api, _) = client(() => 'https://host.example');
+      expect(
+        () => api.resolve('http://cdn.example/a.mp3'),
+        throwsA(isA<NetworkException>()),
+      );
+      final (local, _) = client(() => 'http://10.0.2.2:8001');
+      expect(
+        local.resolve('http://10.0.2.2:8001/a.mp3').toString(),
+        'http://10.0.2.2:8001/a.mp3',
+      );
+    });
+
+    test('downloads send no token', () async {
+      final (api, sent) = client(() => 'http://fake');
+
+      final bytes = await api.getBytes(api.resolve('/api/v1/audio/files/k'));
+
+      expect(bytes, [1, 2, 3]);
+      expect(sent.single.headers.containsKey('Authorization'), isFalse);
+      expect(sent.single.followRedirects, isFalse);
+    });
+
+    test(
+      'a refused download is an ApiException, offline a NetworkException',
+      () async {
+        final api = FakeApi()
+          ..on(
+            'GET /api/v1/audio/files/k',
+            (_, _) => throw FakeApiError(403, 'forbidden'),
+          );
+        final client = api.client(token: 't0k');
+        final url = client.resolve('/api/v1/audio/files/k');
+
+        await expectLater(
+          client.getBytes(url),
+          throwsA(
+            isA<ApiException>().having((e) => e.statusCode, 'status', 403),
+          ),
+        );
+        api.offline = true;
+        await expectLater(
+          client.getBytes(url),
+          throwsA(isA<NetworkException>()),
+        );
+      },
+    );
   });
 }

@@ -157,7 +157,7 @@ void main() {
   group('ChatService.sendMessageStream', () {
     ChatService serviceWith(MockClient client) => ChatService(
       ApiClient(
-        baseUrl: 'http://test',
+        baseUrl: () => 'http://test',
         tokenProvider: () => 'jwt',
         httpClient: client,
       ),

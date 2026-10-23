@@ -8,6 +8,7 @@ import 'package:redream_app/core/theme/app_theme.dart';
 import 'package:redream_app/features/auth/sign_in_screen.dart';
 import 'package:redream_app/features/consent/consent_screen.dart';
 import 'package:redream_app/features/onboarding/onboarding_screen.dart';
+import 'package:redream_app/features/server/server_gate.dart';
 import 'package:redream_app/features/shell/main_shell.dart';
 import 'package:redream_app/features/shell/user_scope.dart';
 import 'package:redream_app/l10n/generated/app_localizations.dart';
@@ -33,7 +34,7 @@ class ReDreamApp extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
       ],
       supportedLocales: AppLocalizations.supportedLocales,
-      home: const AuthGate(),
+      home: const ServerGate(child: AuthGate()),
     );
   }
 }

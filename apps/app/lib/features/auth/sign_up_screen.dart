@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
 import 'package:redream_app/core/utils/errors.dart';
@@ -26,6 +27,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
   bool _busy = false;
   String? _error;
 
+  /// The server asked for a code although its info said none was needed
+  /// (the mode changed since): the field shows from then on.
+  bool _inviteAsked = false;
+
   @override
   void dispose() {
     _email.dispose();
@@ -36,7 +41,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   Future<void> _submit() async {
-    if (!_form.currentState!.validate()) return;
+    if (_busy || !_form.currentState!.validate()) return;
     final l10n = AppLocalizations.of(context)!;
     if (_password.text != _confirm.text) {
       setState(() => _error = l10n.passwordsDoNotMatch);
@@ -63,10 +68,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
       }
     } on AuthFailure catch (e) {
       // An invite-only server refuses a missing code like a wrong one.
-      final message = e.kind == AuthFailureKind.inviteInvalid && invite.isEmpty
+      final missing = e.kind == AuthFailureKind.inviteInvalid && invite.isEmpty;
+      final message = missing
           ? l10n.authInviteRequired
           : describeError(e, l10n);
-      if (mounted) setState(() => _error = message);
+      if (mounted) {
+        setState(() {
+          _error = message;
+          _inviteAsked |= missing;
+        });
+      }
     } on Exception catch (e) {
       if (mounted) setState(() => _error = describeError(e, l10n));
     } finally {
@@ -77,6 +88,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final instance = context.watch<ServerConfig>().instance;
+    final showInvite = _inviteAsked || (instance?.inviteOnly ?? true);
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -107,22 +120,27 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     label: l10n.signUpConfirmPassword,
                     isNewPassword: true,
                     validator: (v) => validateConfirm(v, _password.text, l10n),
-                    textInputAction: TextInputAction.next,
+                    textInputAction: showInvite
+                        ? TextInputAction.next
+                        : TextInputAction.done,
+                    onSubmitted: showInvite ? null : (_) => _submit(),
                   ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _invite,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    textInputAction: TextInputAction.done,
-                    onFieldSubmitted: (_) => _submit(),
-                    decoration: InputDecoration(
-                      labelText: l10n.signUpInviteCode,
-                      helperText: l10n.signUpInviteCodeHint,
-                      helperMaxLines: 2,
-                      prefixIcon: const Icon(Icons.vpn_key_outlined),
+                  if (showInvite) ...[
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _invite,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) => _submit(),
+                      decoration: InputDecoration(
+                        labelText: l10n.signUpInviteCode,
+                        helperText: l10n.signUpInviteCodeHint,
+                        helperMaxLines: 2,
+                        prefixIcon: const Icon(Icons.vpn_key_outlined),
+                      ),
                     ),
-                  ),
+                  ],
                   const SizedBox(height: 16),
                   if (_error != null) ...[
                     InlineNotice(message: _error!),

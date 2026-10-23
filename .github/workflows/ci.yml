@@ -195,8 +195,6 @@ jobs:
         with:
           flutter-version-file: apps/app/.fvmrc
           cache: true
-      # pubspec bundles .env as an asset and .env is gitignored.
-      - run: cp .env.example .env
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test

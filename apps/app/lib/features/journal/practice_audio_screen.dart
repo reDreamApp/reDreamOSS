@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
@@ -121,7 +120,7 @@ class _PracticeAudioScreenState extends State<PracticeAudioScreen> {
       if (recheck.existsSync()) {
         await _playCached(recheck);
       } else {
-        await _player.setUrl(url);
+        await _player.setUrl(journal.rehearsalUri(url).toString());
       }
     } on Exception catch (e) {
       if (mounted) {
@@ -141,19 +140,20 @@ class _PracticeAudioScreenState extends State<PracticeAudioScreen> {
         showAppSnackBar(context, l10n.audioAlreadySaved);
         return;
       }
-      _dream = await context.read<JournalState>().refreshRehearsal(_dream.id);
-      final res = await http.get(Uri.parse(_dream.rehearsalAudioUrl!));
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        throw HttpException('${res.statusCode}');
-      }
+      final journal = context.read<JournalState>();
+      _dream = await journal.refreshRehearsal(_dream.id);
+      final url = _dream.rehearsalAudioUrl ?? '';
+      if (url.isEmpty) throw _UserError(l10n.audioUnavailable);
+      final bytes = await journal.downloadRehearsal(url);
       await file.parent.create(recursive: true);
-      await SecureAudioCache.save(file, res.bodyBytes);
+      await SecureAudioCache.save(file, bytes);
       if (mounted) showAppSnackBar(context, l10n.audioSaved);
     } on Exception catch (e) {
       if (mounted) {
+        final reason = e is _UserError ? e.message : describeError(e, l10n);
         showAppSnackBar(
           context,
-          l10n.audioDownloadFailed(describeError(e, l10n)),
+          l10n.audioDownloadFailed(reason),
           error: true,
         );
       }

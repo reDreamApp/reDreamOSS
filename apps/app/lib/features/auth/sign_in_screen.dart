@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/server/server_config.dart';
+import 'package:redream_app/core/theme/app_theme.dart';
 import 'package:redream_app/core/utils/errors.dart';
 import 'package:redream_app/core/widgets/app_button.dart';
 import 'package:redream_app/core/widgets/feedback.dart';
 import 'package:redream_app/features/auth/auth_fields.dart';
 import 'package:redream_app/features/auth/forgot_password_screen.dart';
 import 'package:redream_app/features/auth/sign_up_screen.dart';
+import 'package:redream_app/features/server/server_gate.dart';
 import 'package:redream_app/l10n/generated/app_localizations.dart';
 
 class SignInScreen extends StatefulWidget {
@@ -32,7 +35,7 @@ class _SignInScreenState extends State<SignInScreen> {
   }
 
   Future<void> _submit() async {
-    if (!_form.currentState!.validate()) return;
+    if (_busy || !_form.currentState!.validate()) return;
     final l10n = AppLocalizations.of(context)!;
     setState(() {
       _busy = true;
@@ -54,6 +57,8 @@ class _SignInScreenState extends State<SignInScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final server = context.watch<ServerConfig>();
+    final closed = server.instance?.registrationClosed ?? false;
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -83,15 +88,16 @@ class _SignInScreenState extends State<SignInScreen> {
                     busy: _busy,
                     onPressed: _submit,
                   ),
-                  TextButton(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => const SignUpScreen(),
+                  if (!closed)
+                    TextButton(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SignUpScreen(),
+                        ),
                       ),
+                      child: Text(l10n.signInSwitch),
                     ),
-                    child: Text(l10n.signInSwitch),
-                  ),
                   TextButton(
                     onPressed: () => Navigator.push(
                       context,
@@ -100,6 +106,18 @@ class _SignInScreenState extends State<SignInScreen> {
                       ),
                     ),
                     child: Text(l10n.forgotPassword),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    l10n.signInServer(server.address),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: BrandTheme.of(context).muted,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _busy ? null : () => changeServer(context),
+                    child: Text(l10n.serverChange),
                   ),
                 ],
               ),

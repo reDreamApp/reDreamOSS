@@ -41,8 +41,12 @@ class FakeAuth extends AuthService {
     notifyListeners();
   }
 
+  /// Runs when signOut is called, before anything changes.
+  void Function()? onSignOut;
+
   @override
   Future<void> signOut() async {
+    onSignOut?.call();
     userId = null;
     email = null;
     notifyListeners();

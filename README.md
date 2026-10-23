@@ -64,11 +64,10 @@ rehearsal MP3s are in the `redream_audio` volume. `make init-env`, `make up`,
 ## Development
 
 ```bash
-cp apps/app/.env.example apps/app/.env   # the app bundles .env as an asset; needed before build/test
 make help                  # list everything
 make db-migrate            # apply apps/server/migrations to DATABASE_URL (Postgres 16+; settings from .env)
 make api-dev               # run the server (backend + AI) on :8001
-make app-run               # flutter run via FVM
+make app-run               # flutter run via FVM; the app asks for the server address on first start
 make test                  # all test suites
 ```
 

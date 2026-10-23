@@ -1,66 +1,26 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
-import 'package:provider/provider.dart';
-import 'package:redream_app/core/settings/app_settings.dart';
-import 'package:redream_app/core/storage/local_store.dart';
 import 'package:redream_app/features/learn/article.dart';
 import 'package:redream_app/features/learn/article_screen.dart';
-import 'package:redream_app/features/learn/articles_service.dart';
 import 'package:redream_app/features/learn/learn_screen.dart';
 import 'package:redream_app/l10n/generated/app_localizations.dart';
 import 'package:redream_app/l10n/generated/app_localizations_de.dart';
 import 'package:redream_app/l10n/generated/app_localizations_en.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-const Map<String, Object> _post = {
-  'slug': 'blog_creativity',
-  'title': {
-    'en': 'Dreams boost Creativity',
-    'de': 'Träume fördern Kreativität',
-  },
-  'excerpt': {'en': 'How dreams solve problems.', 'de': 'Wie Träume helfen.'},
-  'post_url': {
-    'en': {'light': 'https://example.com/en', 'dark': 'https://example.com/en'},
-  },
-};
+const _studyUrl =
+    'https://link.springer.com/article/10.1007/s11818-026-00550-w';
 
-/// Learn with one website post; [opened] collects the links it opens.
+/// Learn as built into the app; [opened] collects the links it opens.
 Future<void> _pumpLearn(WidgetTester tester, {List<Uri>? opened}) async {
-  // The service reads the website's address from the app's env file.
-  dotenv.loadFromString(isOptional: true);
-  FlutterSecureStorage.setMockInitialValues({});
-  SharedPreferences.setMockInitialValues({});
-  final settings = AppSettings(await LocalStore.open(), platformLanguage: 'en');
-  final website = MockClient(
-    (_) async => http.Response.bytes(
-      utf8.encode(
-        jsonEncode({
-          'posts': [_post],
-        }),
-      ),
-      200,
-    ),
-  );
-
   await tester.pumpWidget(
-    ChangeNotifierProvider<AppSettings>.value(
-      value: settings,
-      child: MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: LearnScreen(
-          service: ArticlesService(httpClient: website),
-          openUrl: (url) async {
-            opened?.add(url);
-            return true;
-          },
-        ),
+    MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: LearnScreen(
+        openUrl: (url) async {
+          opened?.add(url);
+          return true;
+        },
       ),
     ),
   );
@@ -68,18 +28,17 @@ Future<void> _pumpLearn(WidgetTester tester, {List<Uri>? opened}) async {
 }
 
 void main() {
-  testWidgets('the team study comes first, then the website posts', (
+  testWidgets('lists the team study without fetching anything', (
     tester,
   ) async {
     await _pumpLearn(tester);
 
-    final study = find.text(
-      'Our study: rewriting nightmares with a web application',
+    expect(
+      find.text('Our study: rewriting nightmares with a web application'),
+      findsOneWidget,
     );
-    final post = find.text('Dreams boost Creativity');
-    expect(study, findsOneWidget);
-    expect(post, findsOneWidget);
-    expect(tester.getTopLeft(study).dy, lessThan(tester.getTopLeft(post).dy));
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(RefreshIndicator), findsNothing);
   });
 
   testWidgets('the button under an article opens it in the browser', (
@@ -90,16 +49,11 @@ void main() {
 
     // One turquoise button per article, right on the list.
     final buttons = find.widgetWithText(FilledButton, 'Open the article');
-    expect(buttons, findsNWidgets(2));
-    await tester.tap(buttons.at(1));
-    await tester.pumpAndSettle();
-    await tester.tap(buttons.at(0));
+    expect(buttons, findsOneWidget);
+    await tester.tap(buttons);
     await tester.pumpAndSettle();
 
-    expect(opened.map((u) => u.toString()), [
-      'https://example.com/en',
-      'https://link.springer.com/article/10.1007/s11818-026-00550-w',
-    ]);
+    expect(opened.map((u) => u.toString()), [_studyUrl]);
     // Still on the list: no page in between.
     expect(find.byType(ArticleScreen), findsNothing);
   });
@@ -110,34 +64,31 @@ void main() {
     final opened = <Uri>[];
     await _pumpLearn(tester, opened: opened);
 
-    await tester.tap(find.text('Dreams boost Creativity'));
+    await tester.tap(
+      find.text('Our study: rewriting nightmares with a web application'),
+    );
     await tester.pumpAndSettle();
 
     expect(find.byType(ArticleScreen), findsOneWidget);
     expect(
-      find.image(const AssetImage('assets/images/learn_creativity.webp')),
+      find.image(const AssetImage('assets/images/learn_study.webp')),
       findsOneWidget,
     );
     expect(opened, isEmpty);
     await tester.tap(find.widgetWithText(FilledButton, 'Open the article'));
     await tester.pumpAndSettle();
-    expect(opened.single.toString(), 'https://example.com/en');
+    expect(opened.single.toString(), _studyUrl);
   });
 
-  test('the known articles have their pictures, others none', () {
-    Article post(String slug) =>
-        Article(slug: slug, title: 't', excerpt: '', urls: const {});
-
+  test('only the study has a picture', () {
     expect(
       Article.ownStudy(AppLocalizationsEn()).image,
       'assets/images/learn_study.webp',
     );
     expect(
-      post('blog_creativity').image,
-      'assets/images/learn_creativity.webp',
+      const Article(slug: 'other', title: 't', excerpt: '', urls: {}).image,
+      isNull,
     );
-    expect(post('blog_sleep_better').image, 'assets/images/learn_sleep.webp');
-    expect(post('blog_something_new').image, isNull);
   });
 
   test('the study links to the journal and keeps the not-therapy line', () {
@@ -145,10 +96,7 @@ void main() {
     final de = Article.ownStudy(AppLocalizationsDe());
 
     for (final brightness in Brightness.values) {
-      expect(
-        en.urlFor(brightness),
-        'https://link.springer.com/article/10.1007/s11818-026-00550-w',
-      );
+      expect(en.urlFor(brightness), _studyUrl);
     }
     expect(en.excerpt, contains('is not therapy'));
     expect(de.excerpt, contains('keine Therapie'));

@@ -1,13 +1,16 @@
 /// Live smoke test: drives the REAL app against a running stack.
 ///
 /// Prerequisites:
-///   - apps/server reachable at `API_BASE_URL` from apps/app/.env
+///   - apps/server reachable at the address given as
+///     `--dart-define=DEFAULT_SERVER_URL=...` (http://10.0.2.2:8001 from the
+///     Android emulator); on a fresh start the app connects to it by itself
 ///   - a test user made with the server's operator CLI
 ///     (`python -m redream_api.cli create-user test@local.dev`), by default
 ///     test@local.dev / Test-12345-chat
 ///     (override with --dart-define=SMOKE_EMAIL=... --dart-define=SMOKE_PASSWORD=...)
 ///
 /// Run: `fvm flutter test integration_test/live_smoke_test.dart -d <device>`
+/// with `--dart-define=DEFAULT_SERVER_URL=http://10.0.2.2:8001`.
 ///
 /// It makes real LLM calls, so it is NOT part of `flutter test` CI.
 library;
