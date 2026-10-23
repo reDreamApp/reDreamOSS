@@ -17,3 +17,9 @@ JsonCol = JSONB().with_variant(JSON(), "sqlite")
 # INTEGER on SQLite (only INTEGER PRIMARY KEY triggers SQLite's rowid
 # autoincrement; a BIGINT PRIMARY KEY is a plain non-auto column).
 PkBigInt = BigInteger().with_variant(Integer(), "sqlite")
+
+# The IRT stages (redream_ai.models.Stage; not imported: the app loads
+# redream_ai lazily) as an SQL value list, for the stage CHECKs on chats and
+# chat_messages. migrations/0001_initial.sql spells out the same list.
+STAGES = ("recording", "intensity", "rewriting", "summary", "final")
+STAGES_SQL = "(" + ", ".join(f"'{stage}'" for stage in STAGES) + ")"

@@ -18,6 +18,8 @@ COPY pyproject.toml uv.lock* ./
 RUN uv sync --frozen --no-install-project --no-dev
 
 COPY src ./src
+# The schema, applied by redream_api.db.migrate (found at /app/migrations).
+COPY migrations ./migrations
 RUN uv sync --frozen --no-dev
 
 RUN useradd --no-create-home --uid 10001 appuser
@@ -37,6 +39,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/api/v1/health || exit 1
 
-# Exactly one worker, stated explicitly: per-process state (the in-memory
-# rate limits and daily AI-request counters) must not be split across processes.
-CMD ["uvicorn", "redream_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]
+# Pending migrations first (waits up to 30 s for the database; a failure
+# stops the container before the server starts), then the server. Exactly one
+# worker, stated explicitly: per-process state (the in-memory rate limits and
+# daily AI-request counters) must not be split across processes.
+CMD ["sh", "-c", "python -m redream_api.db.migrate && exec uvicorn redream_api.main:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log"]

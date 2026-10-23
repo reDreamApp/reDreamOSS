@@ -42,22 +42,56 @@ jobs:
         run: uv run mypy src/redream_api
         continue-on-error: true
 
-  migrations:
-    name: supabase migrations apply from zero
+  postgres-schema:
+    name: postgres schema — migrations from zero, drift + smoke tests
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/server
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v4
-      - uses: supabase/setup-cli@v1
+      # setup-uv stopped publishing floating major tags in v8 — pin exactly.
+      - uses: astral-sh/setup-uv@v8.2.0
         with:
-          version: 2.109.0
-      # `db start` boots the Supabase Postgres image (auth/storage schemas
-      # included — plain postgres would reject the auth.users FKs), then
-      # `migration up --local` applies supabase/migrations/ from zero.
-      # This replaces the Supabase-dashboard GitHub integration as the
-      # migration gate (the free-tier cloud project auto-pauses; see
-      # RELEASING.md).
-      - run: supabase db start
-      - run: supabase migration up --local
+          enable-cache: true
+      - run: uv sync --frozen
+      # The runner as the container runs it, twice: the second run must find
+      # migrations/ fully applied and change nothing.
+      - name: migrate from zero, then again
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/postgres
+        run: |
+          uv run python -m redream_api.db.migrate
+          uv run python -m redream_api.db.migrate
+      # tests/pg migrates (and wipes) a database of its own: an empty one.
+      - name: create the empty test database
+        run: |
+          uv run python -c "
+          import asyncio, asyncpg
+          async def main():
+              conn = await asyncpg.connect('postgresql://postgres:postgres@localhost:5432/postgres')
+              await conn.execute('CREATE DATABASE redream_test')
+              await conn.close()
+          asyncio.run(main())"
+      # REQUIRE_PG: a missing TEST_DATABASE_URL fails instead of skipping all.
+      - name: pytest tests/pg (runner, schema drift vs the ORM, smoke)
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/redream_test
+          REQUIRE_PG: "1"
+        run: uv run pytest -q tests/pg
+      - run: uv run ruff check tests/pg
 
   app:
     name: apps/app — flutter analyze + test

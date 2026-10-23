@@ -3,6 +3,9 @@
 Per-test SQLite file under /tmp, dependency-overrides for `get_db`,
 `get_current_user`, and `get_ai_client`. No live AI. `auth_client` leaves
 `get_current_user` real: requests carry bearer tokens from /auth/login.
+
+The tables come from the ORM (`create_all`); production runs
+migrations/*.sql instead, and tests/pg checks the two agree on a real Postgres.
 """
 
 from __future__ import annotations

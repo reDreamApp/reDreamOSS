@@ -13,6 +13,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..base import Base
+from ._types import PkBigInt
 
 HEALTH_DATA_CONSENT_KEY = "health_data_processing"
 
@@ -20,12 +21,15 @@ HEALTH_DATA_CONSENT_KEY = "health_data_processing"
 class UserConsent(Base):
     __tablename__ = "user_consents"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     consent_key: Mapped[str] = mapped_column(
-        Text, nullable=False, default=HEALTH_DATA_CONSENT_KEY
+        Text,
+        nullable=False,
+        default=HEALTH_DATA_CONSENT_KEY,
+        server_default=HEALTH_DATA_CONSENT_KEY,
     )
     version: Mapped[str] = mapped_column(Text, nullable=False)
     granted: Mapped[bool] = mapped_column(Boolean, nullable=False)

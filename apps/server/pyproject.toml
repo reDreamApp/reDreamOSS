@@ -79,6 +79,11 @@ mypy_path = "src"
 module = ["networkx.*"]
 ignore_missing_imports = true
 
+# The migration runner talks to asyncpg directly; asyncpg ships no type hints.
+[[tool.mypy.overrides]]
+module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
+
 # Vendored: ported IRT core + safety engine (copied verbatim; not type-clean by
 # design). Imports still resolve; their internal type errors are not reported.
 # implicit_reexport: the glue code accesses names the vendored modules re-import

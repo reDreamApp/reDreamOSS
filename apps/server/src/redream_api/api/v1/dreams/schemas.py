@@ -32,12 +32,14 @@ class DreamCreate(BaseModel):
     title: str
     original_dream: str
     rewritten_dream: str | None = None
-    intensity: int | None = None
+    # 0-10, as the database CHECK (dreams_intensity_check).
+    intensity: int | None = Field(default=None, ge=0, le=10)
     is_nightmare: bool = False
     is_current_dream: bool = False
     image_url: str | None = None
     session_id: str | None = None
-    source: str = "manual"
+    # The database CHECK allows only these two (dreams_source_check).
+    source: str = Field(default="manual", pattern="^(manual|chatbot)$")
     language: str | None = Field(default=None, pattern="^(en|de)$")
 
     @model_validator(mode="before")
@@ -50,7 +52,7 @@ class DreamUpdate(BaseModel):
     title: str | None = None
     original_dream: str | None = None
     rewritten_dream: str | None = None
-    intensity: int | None = None
+    intensity: int | None = Field(default=None, ge=0, le=10)
     is_nightmare: bool | None = None
     image_url: str | None = None
 

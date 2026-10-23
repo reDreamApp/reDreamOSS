@@ -23,7 +23,7 @@ apps/app/.flutter-plugins-dependencies
 apps/app/build/
 apps/app/.fvm/flutter_sdk
 
-# Node (Supabase CLI / tooling)
+# Node (tooling)
 node_modules/
 
 # Env files — real secrets live in .env (ignored); *.env.example are committed templates
@@ -35,10 +35,6 @@ infra/env/
 
 # Rehearsal audio written by a local server run (AUDIO_DIR's default)
 apps/server/data/
-
-# Supabase CLI local state
-supabase/.branches/
-supabase/.temp/
 
 # Local assistant state and review artifacts
 .codex/

@@ -58,20 +58,14 @@ lint: ai-lint api-lint app-analyze ## lint everything
 
 fmt: ai-fmt api-fmt app-fmt ## format everything
 
-# ---- supabase / db ------------------------------------------------------
+# ---- db (plain Postgres 16+, apps/server/migrations) --------------------
 
-.PHONY: db-up db-down db-reset db-migrate db-new-migration
-db-up: ## start local Supabase stack
-	supabase start
+.PHONY: db-migrate db-test
+db-migrate: ## apply pending migrations to DATABASE_URL (env or apps/server/.env)
+	cd apps/server && uv run $(if $(wildcard apps/server/.env),--env-file .env,) python -m redream_api.db.migrate
 
-db-down: ## stop local Supabase stack
-	supabase stop
-
-db-migrate: ## apply pending migrations
-	supabase db push
-
-db-new-migration: ## create a new empty migration (NAME=feature_x)
-	supabase migration new $(NAME)
+db-test: ## runner, schema drift + smoke tests on Postgres (TEST_DATABASE_URL: an empty database)
+	cd apps/server && REQUIRE_PG=1 uv run pytest tests/pg
 
 # ---- infra (production-equivalent compose) ------------------------------
 

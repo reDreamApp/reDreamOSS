@@ -7,14 +7,12 @@ A self-help companion app for working with difficult dreams: record a dream, rei
 ```
 apps/
   server/    Python FastAPI, one process: redream_api (async SQLAlchemy, source of truth for users, chats, dreams) + redream_ai (chat, safety classifier, TTS, STT), called in-process
+    migrations/  the Postgres schema as numbered SQL files, applied by the server container at start
   app/       Flutter (version pinned in apps/app/.fvmrc): iOS + Android client, EN + DE
-
-supabase/
-  migrations/    SQL migrations (managed by Supabase CLI, single Postgres)
 
 infra/
   terraform/            OpenTofu config for the Scaleway box: instance, firewall, runtime key, backup bucket
-  bootstrap.sh          One-time setup of that box: Supabase, env files, migrations, stack, backups, trace retention
+  bootstrap.sh          One-time setup of that box: env files, stack, backups, trace retention
   docker-compose.yml    Scaleway production topology: caddy + api + ai + langfuse
   caddy/                Reverse proxy config (TLS, SSE-friendly)
 
@@ -39,6 +37,7 @@ Scaleway Generative APIs (chat, speech-to-text), Mistral (fallback, text-to-spee
 ```bash
 cp apps/app/.env.example apps/app/.env   # the app bundles .env as an asset; needed before build/test
 make help                  # list everything
+make db-migrate            # apply apps/server/migrations to DATABASE_URL (Postgres 16+)
 make api-dev               # run the server (backend + AI) on :8001
 make app-run               # flutter run via FVM
 make test                  # all test suites
@@ -57,7 +56,7 @@ ends up public are in [`infra/README.md`](infra/README.md).
 Binding architectural decisions live in [`docs/decisions/`](docs/decisions/README.md). Read those before making structural changes.
 
 Key invariants:
-- One Postgres (self-hosted Supabase's). No standalone `db` container.
+- One plain Postgres (16+). Its schema is `apps/server/migrations/*.sql`, applied by `python -m redream_api.db.migrate` before the server starts; the ORM models must match it (CI checks).
 - AI service is stateless — every request carries the full conversation history.
 - Structured outputs (JSON mode) for the summary. No string-matching parsers.
 - Self-help framing, never therapy. Disclaimer copy required on user-facing surfaces.

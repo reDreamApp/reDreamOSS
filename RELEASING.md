@@ -2,26 +2,34 @@
 
 Decided 2026-07-02. Two long-lived branches, one release gate:
 
-- **`main`** — development. The dev database is the **local Supabase stack**
-  (`supabase start`, see docs/LOCAL_TESTING.md); CI's `migrations` job proves
-  every push applies `supabase/migrations/` cleanly from zero. Pushing main
+- **`main`** — development. Any Postgres 16+ serves as the dev database
+  (`make db-migrate` applies `apps/server/migrations/` to `DATABASE_URL`).
+  CI's `postgres-schema` job proves every push applies the migrations cleanly
+  from zero on Postgres 17 and that they match the ORM models. Pushing main
   never deploys anything.
 - **`production`** — the release gate. Pushing it runs
   `.github/workflows/deploy.yml`, which rsyncs the repo to the Scaleway host,
-  **applies pending migrations to the self-hosted Postgres first**, then
-  `docker compose up -d --build`. Code and schema travel on the same ref, so
-  the API can never start against a database missing its migration.
+  then `docker compose up -d --build`. The server container **applies pending
+  migrations before it starts** (`python -m redream_api.db.migrate`; a failed
+  migration stops it). Code and schema travel in the same image, so the API
+  can never start against a database missing its migration.
+  (`deploy.yml` and the compose stack it starts are not in this repository
+  yet; they return with the self-hosting compose setup.)
 
 ## How a schema change ships
 
-1. Create it: `make db-new-migration NAME=feature_x`, edit the SQL, test
-   locally against the local stack (`supabase migration up --local`, or
-   `supabase db reset` for a from-zero check).
-2. Merge to `main` → CI's `migrations` job re-proves the full chain applies
-   from zero on the Supabase Postgres image.
-3. Release: fast-forward `production` to main and push:
+1. Add the next numbered file, `apps/server/migrations/000N_feature_x.sql`
+   (plain SQL without BEGIN/COMMIT: the runner applies each file and its
+   `schema_migrations` row in one transaction), and change the ORM models to
+   match, in the same commit. Never edit a file that has been applied
+   anywhere: the runner refuses one whose checksum changed.
+2. Check locally: `make db-migrate`, then `make db-test` with
+   `TEST_DATABASE_URL` pointing at an empty, throwaway database (runner,
+   schema drift against the ORM, smoke test on the migrated schema).
+3. Merge to `main` → CI's `postgres-schema` job re-proves both from zero.
+4. Release: fast-forward `production` to main and push:
    `git push origin main:production`
-   → migrations apply to the self-hosted DB, then containers rebuild.
+   → containers rebuild; the server migrates the database as it starts.
 
 ## Consent-text change
 
@@ -35,13 +43,8 @@ sends the new version.
 
 ## One-time setup
 
-- The box: `infra/bootstrap.sh` installs the Supabase CLI and writes
-  `/srv/redreamai/infra/env/deploy.env` with
-  `SUPABASE_DB_URL=postgresql://postgres:<password>@127.0.0.1:54322/postgres?sslmode=disable`
-  (host-only file; `infra/env/` is excluded from rsync and git). Port 54322 is
-  Postgres on loopback, published by `infra/supabase/docker-compose.redream.yml`.
-  The CLI needs the connection string **percent-encoded**; the generated
-  password is hex, so that only matters if you change it by hand.
+- The box: see infra/README.md. Deploys need no database access of their
+  own: the server container migrates the database it is configured with.
 - GitHub: the four deploy secrets (`SCALEWAY_HOST`, `SCALEWAY_PORT`,
   `SCALEWAY_USER`, `SCALEWAY_SSH_KEY`; see infra/README.md).
 - [ ] Create the branch: `git branch production && git push origin production`.
@@ -49,10 +52,9 @@ sends the new version.
 ## Caveats
 
 - First-ever deploy: the workflow needs a bootstrapped box (infra/README.md,
-  "First deploy") — Supabase running and `deploy.env` in place.
-- Auth (`auth.*`) is Supabase-managed and works regardless of branch wiring;
-  only `public.*` schema depends on migrations reaching the DB.
-- `apps/server` tests don't need any of this (in-memory SQLite from the ORM
-  models) — which is exactly why a missing migration surfaces only in a real
-  environment. When you add a column to a model, the migration belongs in the
-  same commit.
+  "First deploy").
+- The default `apps/server` tests build their tables from the ORM models on
+  SQLite, so on their own they never see a model change without its
+  migration (or the reverse). `tests/pg` (CI's `postgres-schema` job) does:
+  it compares the migrated Postgres with the models. Both belong in the same
+  commit.
