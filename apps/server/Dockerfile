@@ -43,4 +43,11 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 # stops the container before the server starts), then the server. Exactly one
 # worker, stated explicitly: per-process state (the in-memory rate limits and
 # daily AI-request counters) must not be split across processes.
-CMD ["sh", "-c", "python -m redream_api.db.migrate && exec uvicorn redream_api.main:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log"]
+# Proxy headers: the client address (the rate limits' key) comes from
+# X-Forwarded-For when the peer is in FORWARDED_ALLOW_IPS. The default,
+# 127.0.0.1, trusts no other peer: safe for a plain docker run. compose.yaml
+# sets its own network's subnet (Caddy and the Docker proxy behind its
+# 127.0.0.1-only port). Addresses or CIDRs, comma-separated; never "*", with
+# which uvicorn takes the leftmost entry, the one a client writes itself.
+# Quoted, so the shell neither splits nor globs it.
+CMD ["sh", "-c", "python -m redream_api.db.migrate && exec uvicorn redream_api.main:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-127.0.0.1}\""]

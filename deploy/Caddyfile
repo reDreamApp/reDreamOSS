@@ -1,0 +1,30 @@
+# Caddy in front of the server (compose profile "caddy"): HTTPS for {$DOMAIN}.
+#
+# Automatic HTTPS (Let's Encrypt) needs ports 80 and 443 reachable from the
+# internet and DOMAIN's DNS (A/AAAA records) pointing at this box. The
+# certificates live in the caddy_data volume.
+#
+# Point the DNS straight at the box (with Cloudflare: "DNS only", not
+# proxied): behind a CDN's proxy Caddy sees the CDN's addresses, and the
+# server's per-address rate limits would count all clients as a few.
+#
+# Caddy does not buffer proxied responses: the chat's SSE stream flows
+# through as it is written (ADR 0009). It replaces any X-Forwarded-For a
+# client sends with the client's real address, which the server trusts from
+# Caddy (FORWARDED_ALLOW_IPS in compose.yaml) for its rate limits. No access
+# log: request URLs and client addresses of a self-help app stay out of the
+# logs. Formatted as `caddy fmt` writes it (tabs), so Caddy does not warn.
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# No caching here: every API answer is per user.
+	reverse_proxy server:8000
+}

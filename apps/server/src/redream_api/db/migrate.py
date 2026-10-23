@@ -2,8 +2,9 @@
 
     python -m redream_api.db.migrate
 
-The container runs it before uvicorn starts; locally:
-uv run --env-file .env python -m redream_api.db.migrate. Reads DATABASE_URL
+The container runs it before uvicorn starts; locally, from apps/server:
+uv run --env-file ../../.env python -m redream_api.db.migrate (or make
+db-migrate from the repo root). Reads DATABASE_URL
 from the environment and nothing else (no Settings: INVITE_CODE and the rest
 are not needed to migrate), and reads it as the app's engine does (SQLAlchemy's
 asyncpg dialect: ?ssl=require and the like work for both). Waits up to 30 s

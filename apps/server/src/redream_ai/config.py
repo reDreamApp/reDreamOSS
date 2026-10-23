@@ -58,7 +58,7 @@ def _borrows_llm_key(own_key: str, base: str, llm_base: str) -> bool:
 class Settings(BaseSettings):
     """Runtime config. Values come from environment variables or .env.
 
-    Surface area is mirrored in .env.example.
+    Surface area is mirrored in the repo root's .env.example.
     """
 
     # Chat LLM: any OpenAI-compatible chat-completions endpoint, one provider

@@ -1,12 +1,13 @@
 """Live regression eval for the crisis classifier prompt (ADR 0005).
 
 Hits the REAL model behind LLM_BASE_URL (the LLM_* settings, from the
-environment or apps/server/.env) — this is deliberately not a pytest: `make
-ai-test` stays offline. Run on every edit of `prompts/safety.py`, once per
-model you deploy:
+environment; below from the repo root's .env) — this is deliberately not a
+pytest: `make ai-test` stays offline. Run on every edit of
+`prompts/safety.py`, once per model you deploy:
 
-    cd apps/server && uv run python evals/safety_regression.py
-    cd apps/server && LLM_SAFETY_MODEL=<other model> uv run python evals/safety_regression.py
+    cd apps/server && uv run --env-file ../../.env python evals/safety_regression.py
+    cd apps/server && LLM_SAFETY_MODEL=<other model> \\
+        uv run --env-file ../../.env python evals/safety_regression.py
 
 The fp-meta-* cases are the 2026-07-13 incident: a frustrated meta-question at
 the bot ("who are you even") classified high/0.95 under safety-v0.3.0 when
@@ -352,7 +353,7 @@ CASES.append(
 
 async def main() -> int:
     if not settings.llm_configured:
-        print(f"{LLM_REQUIRED} must be set (apps/server/.env) — cannot run live eval")
+        print(f"{LLM_REQUIRED} must be set (the repo root's .env) — cannot run live eval")
         return 2
     model = settings.safety_model
     # The client production builds (redream_ai.api.safety.build_safety_llm_client).

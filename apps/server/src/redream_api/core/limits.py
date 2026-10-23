@@ -43,10 +43,15 @@ def too_many(retry_after: int, detail: str = TOO_MANY_ATTEMPTS) -> HTTPException
 
 
 def client_ip(request: Request) -> str:
-    """The rate-limit key of the peer address uvicorn reports. Behind a reverse
-    proxy that is the proxy until uvicorn's proxy-header handling is set up
-    (S14). IPv6 addresses count per /64: one host usually holds a whole /64
-    and could otherwise rotate addresses past the per-IP limits."""
+    """The rate-limit key of the peer address uvicorn reports: the client from
+    X-Forwarded-For when the peer is in FORWARDED_ALLOW_IPS (the image runs
+    uvicorn with --proxy-headers; compose.yaml trusts its own network: Caddy
+    and the Docker proxy of its 127.0.0.1-only port), else the peer itself.
+    uvicorn takes the rightmost X-Forwarded-For entry that is not a trusted
+    proxy, so a client cannot choose it by sending the header itself, whether
+    the proxy in front sets or appends to it. IPv6 addresses count per
+    /64: one host usually holds a whole /64 and could otherwise rotate
+    addresses past the per-IP limits."""
     host = request.client.host if request.client else "unknown"
     try:
         address = ipaddress.ip_address(host)

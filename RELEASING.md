@@ -5,16 +5,19 @@ Decided 2026-07-02. Two long-lived branches, one release gate:
 - **`main`** — development. Any Postgres 16+ serves as the dev database
   (`make db-migrate` applies `apps/server/migrations/` to `DATABASE_URL`).
   CI's `postgres-schema` job proves every push applies the migrations cleanly
-  from zero on Postgres 17 and that they match the ORM models. Pushing main
+  from zero on Postgres 17 and that they match the ORM models; its `stack`
+  job builds and starts `compose.yaml` and logs in against it. Pushing main
   never deploys anything.
-- **`production`** — the release gate. Pushing it runs
-  `.github/workflows/deploy.yml`, which rsyncs the repo to the Scaleway host,
-  then `docker compose up -d --build`. The server container **applies pending
-  migrations before it starts** (`python -m redream_api.db.migrate`; a failed
-  migration stops it). Code and schema travel in the same image, so the API
-  can never start against a database missing its migration.
-  (`deploy.yml` and the compose stack it starts are not in this repository
-  yet; they return with the self-hosting compose setup.)
+- **`production`** — the release gate: what operators run. Nothing deploys
+  automatically; on the box, an operator updates with
+  `git pull` (on `production`) and `make update` (`docker compose pull
+  --ignore-buildable`, `docker compose build --pull`, `docker compose up -d
+  --wait`: without the pulls, Postgres, Caddy and the Python base image stay
+  on whatever version the box first fetched). The server
+  container **applies pending migrations before it starts**
+  (`python -m redream_api.db.migrate`; a failed migration stops it). Code and
+  schema travel in the same image, so the API can never start against a
+  database missing its migration.
 
 ## How a schema change ships
 
@@ -29,7 +32,8 @@ Decided 2026-07-02. Two long-lived branches, one release gate:
 3. Merge to `main` → CI's `postgres-schema` job re-proves both from zero.
 4. Release: fast-forward `production` to main and push:
    `git push origin main:production`
-   → containers rebuild; the server migrates the database as it starts.
+   → on each box, `git pull` and `make update` rebuild the server; it
+   migrates the database as it starts.
 
 ## Consent-text change
 
@@ -43,16 +47,14 @@ sends the new version.
 
 ## One-time setup
 
-- The box: see infra/README.md. Deploys need no database access of their
-  own: the server container migrates the database it is configured with.
-- GitHub: the four deploy secrets (`SCALEWAY_HOST`, `SCALEWAY_PORT`,
-  `SCALEWAY_USER`, `SCALEWAY_SSH_KEY`; see infra/README.md).
+- A box: see "Run it" in [README.md](README.md) (`scripts/init-env.sh`,
+  `docker compose up -d --build --wait`, the first user with the CLI). Updates need
+  no database access of their own: the server container migrates the
+  database it is configured with.
 - [ ] Create the branch: `git branch production && git push origin production`.
 
 ## Caveats
 
-- First-ever deploy: the workflow needs a bootstrapped box (infra/README.md,
-  "First deploy").
 - The default `apps/server` tests build their tables from the ORM models on
   SQLite, so on their own they never see a model change without its
   migration (or the reverse). `tests/pg` (CI's `postgres-schema` job) does:

@@ -4,7 +4,8 @@ name: CI
 # redream_ai and the Flutter analyzer (both fully green). redream_api lint
 # (ruff / mypy) is RED AT BASELINE — it runs as an informational step
 # (continue-on-error) until the dedicated cleanup pass, so CI is meaningful
-# instead of permanently red.
+# instead of permanently red. The stack job runs compose.yaml the way an
+# operator does (scripts/init-env.sh, docker compose up, the CLI, a login).
 
 on:
   pull_request:
@@ -35,6 +36,9 @@ jobs:
       - run: uv run pytest -q
       - run: uv run ruff check src/redream_ai tests/ai evals
       - run: uv run mypy src/redream_ai
+      # The deployment checks without Docker (compose.yaml, .env.example,
+      # init-env.sh); the stack job below runs the real thing.
+      - run: uv run ruff check tests/deploy
       - name: ruff redream_api (informational — red baseline, see docs/ROADMAP.md)
         run: uv run ruff check src/redream_api tests/api
         continue-on-error: true
@@ -92,6 +96,91 @@ jobs:
           REQUIRE_PG: "1"
         run: uv run pytest -q tests/pg
       - run: uv run ruff check tests/pg
+
+  stack:
+    name: compose stack — build, start, log in
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # The operator's path: .env with a database password and an invite code,
+      # the LLM_* left empty (no model calls; chat reports itself off).
+      - run: sh scripts/init-env.sh
+      # --wait: until db and server report healthy (the server's is the
+      # image's HEALTHCHECK, first probed after 30 s).
+      - name: build and start
+        run: docker compose up -d --build --wait --wait-timeout 180
+      - name: published on 127.0.0.1 only
+        run: test "$(docker compose port server 8000)" = "127.0.0.1:8000"
+      - name: audio volume belongs to appuser, mode 700
+        run: |
+          test "$(docker compose exec -T server stat -c '%U %a' /app/data/audio)" = "appuser 700"
+          docker compose exec -T server sh -c 'touch /app/data/audio/.ci && rm /app/data/audio/.ci'
+      - name: create a user with the CLI
+        run: >-
+          printf 'ci-password-123\n' |
+          docker compose exec -T server python -m redream_api.cli create-user ci@example.org --password-stdin
+      - name: log in
+        run: |
+          token=$(curl -fsS http://127.0.0.1:8000/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email": "ci@example.org", "password": "ci-password-123"}' | jq -er '.token')
+          test -n "$token"
+      - name: instance — chat off, invite-only
+        run: >-
+          curl -fsS http://127.0.0.1:8000/api/v1/instance |
+          jq -e '.features.chat == false and .registration == "invite"'
+      - name: health — up, LLM not configured
+        run: >-
+          curl -fsS http://127.0.0.1:8000/api/v1/health |
+          jq -e '.status == "ok" and .llm_ready == false'
+      # The image's migrator, a second time: the schema is fully applied.
+      - name: migrate again changes nothing
+        run: |
+          out=$(docker compose exec -T server python -m redream_api.db.migrate)
+          echo "$out"
+          case "$out" in *"applied 0,"*) ;; *) exit 1 ;; esac
+      # X-Forwarded-For counts only from the compose network (the Docker
+      # proxy behind the published port), and its rightmost untrusted entry
+      # is the client: what a client writes into the header itself (and a
+      # proxy in front appends to) cannot pick the address the rate limits
+      # count. With FORWARDED_ALLOW_IPS="*" the 429 below would be a 403.
+      - name: proxy headers — a client cannot pick its rate-limit address
+        run: |
+          subnet=$(docker network inspect redream_default --format '{{(index .IPAM.Config 0).Subnet}}')
+          test "$(docker compose exec -T server printenv FORWARDED_ALLOW_IPS)" = "$subnet"
+          register() {
+            curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/auth/register \
+              -H 'Content-Type: application/json' -H "X-Forwarded-For: $1" \
+              -d '{"email": "xff@example.org", "password": "ci-password-123", "invite_code": "wrong-code"}'
+          }
+          # Five sign-up attempts an hour per address (each refused: wrong code).
+          for _ in 1 2 3 4 5; do test "$(register '6.6.6.6, 203.0.113.7')" = 403; done
+          # The client (rightmost) is over its limit, whatever it puts first.
+          test "$(register '1.1.1.1, 203.0.113.7')" = 429
+          # Another client is not: the header is trusted from the Docker proxy.
+          test "$(register '203.0.113.8')" = 403
+      - name: caddy profile resolves
+        run: DOMAIN=example.org docker compose --profile caddy config --quiet
+      - name: Caddyfile is valid
+        run: >-
+          DOMAIN=example.org docker compose --profile caddy run --rm --no-deps -T
+          --entrypoint caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      # Compose cannot require DOMAIN for the profile (it resolves every
+      # service); the caddy entrypoint does.
+      - name: caddy refuses to start without DOMAIN
+        run: |
+          rc=0
+          out=$(DOMAIN= timeout 120 docker compose --profile caddy run --rm --no-deps -T caddy 2>&1) || rc=$?
+          echo "$out"
+          test "$rc" = 1
+          case "$out" in *"set DOMAIN in .env"*) ;; *) exit 1 ;; esac
+      - name: logs
+        if: failure()
+        run: docker compose --profile caddy logs --no-color
+      - name: tear down
+        if: always()
+        run: docker compose --profile caddy down -v
 
   app:
     name: apps/app — flutter analyze + test

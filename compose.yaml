@@ -1,0 +1,142 @@
+# reDream on one box: Postgres + the server, and optionally Caddy for HTTPS.
+#
+#   sh scripts/init-env.sh          # .env from .env.example, secrets filled in
+#   (fill in the LLM_* values in .env)
+#   docker compose up -d --build --wait
+#   docker compose exec server python -m redream_api.cli create-user EMAIL
+#
+# Without the caddy profile the server listens on 127.0.0.1:8000 only (put a
+# tunnel or your own reverse proxy in front of it). With it, Caddy serves
+# https://$DOMAIN: set DOMAIN and COMPOSE_PROFILES=caddy in .env, so that
+# every docker compose command (up, down, logs, pull) includes Caddy.
+#
+# Updates (after git pull): make update, which pulls the newer postgres and
+# caddy images, rebuilds the server on a fresh base image and restarts.
+#
+# Settings come from .env (one file: compose reads it for the ${...} values
+# below, and the server gets all of it via env_file). See .env.example.
+
+# Fixed, so the volumes (redream_pgdata, redream_audio, ...) do not depend on
+# the checkout's directory name: a renamed or moved checkout finds its data.
+# COMPOSE_PROJECT_NAME still overrides it.
+name: redream
+
+x-logging: &logging
+  # Docker's default json-file driver grows without bound; cap it per container.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    # Postgres 17, the version CI tests the migrations on. The tag moves to
+    # new minor releases only when you pull it (make update); pin a minor
+    # (postgres:17.6) or a digest if you want reproducible upgrades. A major
+    # upgrade needs a dump and restore.
+    image: postgres:17
+    environment:
+      POSTGRES_USER: redream
+      POSTGRES_DB: redream
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/init-env.sh}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Over TCP: during its first start the image runs a temporary server on
+    # the socket only, which must not count as ready.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "redream", "-d", "redream"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # No published ports: only the server reaches it, over the compose network.
+    restart: unless-stopped
+    logging: *logging
+
+  server:
+    build: ./apps/server
+    image: redream-server:local
+    env_file: .env
+    environment:
+      # The password is hex (scripts/init-env.sh); one you set yourself must
+      # be letters, digits and . _ ~ - only: it goes into this URL as is.
+      DATABASE_URL: postgresql+asyncpg://redream:${POSTGRES_PASSWORD:?run scripts/init-env.sh}@db:5432/redream
+      AUDIO_DIR: /app/data/audio
+      # Trust X-Forwarded-For only from peers on this project's network
+      # (networks below): Caddy, and the Docker proxy that carries everything
+      # arriving on the published port. uvicorn then takes the rightmost
+      # X-Forwarded-For entry that is not one of them, which is the real
+      # client both behind a proxy that sets the header (Caddy) and behind
+      # one that appends to the client's (Cloudflare Tunnel, nginx's
+      # $proxy_add_x_forwarded_for). Never "*": uvicorn would then take the
+      # leftmost entry, which the client writes itself.
+      FORWARDED_ALLOW_IPS: ${NETWORK_SUBNET:-172.30.53.0/24}
+    # A real PID 1 (tini): signals reach uvicorn, zombies are reaped.
+    init: true
+    # Time for a running chat turn to finish on a stop or update before the
+    # container is killed (Docker's default is 10 s).
+    stop_grace_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Rehearsal MP3s (personal content; deleted with the dream or account).
+      # A new named volume takes the image directory's owner and mode (appuser,
+      # 0700) on first use.
+      - audio:/app/data/audio
+    # 127.0.0.1 only, never 0.0.0.0: the server trusts X-Forwarded-For from
+    # the Docker proxy behind this port (FORWARDED_ALLOW_IPS above), so anyone
+    # who could reach it directly could pick the address the rate limits
+    # count. Docker's published ports also bypass host firewalls such as ufw.
+    ports:
+      - "127.0.0.1:${SERVER_PORT:-8000}:8000"
+    # Health: the image's HEALTHCHECK (curl /api/v1/health).
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    # Only with the caddy profile (COMPOSE_PROFILES=caddy in .env, or
+    # --profile caddy). Automatic HTTPS (Let's Encrypt) needs ports 80 and 443
+    # reachable from the internet and DOMAIN's DNS pointing at this box.
+    profiles: ["caddy"]
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    # Compose resolves ${...} in every service, also those of an inactive
+    # profile, so ${DOMAIN:?} here would stop plain `docker compose up`.
+    # The check runs when Caddy starts instead.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        test -n "$$DOMAIN" || { echo "caddy: set DOMAIN in .env for the caddy profile" >&2; exit 1; };
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  default:
+    # Pinned, so FORWARDED_ALLOW_IPS can name it. If it clashes with a network
+    # the box already has, set NETWORK_SUBNET in .env to a free private /24.
+    ipam:
+      config:
+        - subnet: ${NETWORK_SUBNET:-172.30.53.0/24}
+
+volumes:
+  pgdata:
+  audio:
+  # Caddy's certificates and keys: keep it, or Let's Encrypt rate limits may
+  # bite on the next start.
+  caddy_data:
+  caddy_config:

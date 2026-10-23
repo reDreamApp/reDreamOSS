@@ -47,7 +47,7 @@ _PRIVACY_URL_HTTP_HOSTS = ("localhost", "127.0.0.1")
 
 
 class Settings(BaseSettings):
-    """Runtime config. Surface area mirrored in .env.example."""
+    """Runtime config. Surface area mirrored in the repo root's .env.example."""
 
     # Database — must use an async driver.
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"

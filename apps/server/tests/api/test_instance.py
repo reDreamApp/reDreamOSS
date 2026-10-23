@@ -139,8 +139,9 @@ def test_unset_is_none(monkeypatch):
 
 
 def test_a_local_env_file_does_not_leak_into_tests(monkeypatch, tmp_path):
-    """Settings read .env from the working directory (apps/server, where the
-    README has operators fill one in). conftest blanks the four variables, and
+    """Settings read .env from the working directory (apps/server when the
+    tests run; a leftover apps/server/.env from before the settings moved to
+    the repo root would be read). conftest blanks the four variables, and
     the environment beats the file: neither a named instance nor an invalid
     PRIVACY_URL there may change what the tests see."""
     (tmp_path / ".env").write_text(

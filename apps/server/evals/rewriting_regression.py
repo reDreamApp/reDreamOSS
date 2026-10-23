@@ -10,9 +10,10 @@ Covers the 2026-07-15 tester feedback (Ramon):
    pins that to "final".
 
 Hits the REAL model behind LLM_BASE_URL (the LLM_* settings, from the
-environment or apps/server/.env). Run on every edit of core/prompts.py:
+environment; below from the repo root's .env). Run on every edit of
+core/prompts.py:
 
-    cd apps/server && uv run python evals/rewriting_regression.py
+    cd apps/server && uv run --env-file ../../.env python evals/rewriting_regression.py
 """
 
 # ruff: noqa: E501 — conversation fixtures read better as one line per turn
@@ -147,7 +148,7 @@ async def eval_routing(label: str, turns, language: str, reply: str, want: str) 
 
 async def main() -> int:
     if not settings.llm_configured:
-        print(f"{LLM_REQUIRED} must be set (apps/server/.env) — cannot run live eval")
+        print(f"{LLM_REQUIRED} must be set (the repo root's .env) — cannot run live eval")
         return 2
 
     failures = 0

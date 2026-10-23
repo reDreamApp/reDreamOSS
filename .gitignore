@@ -31,7 +31,6 @@ node_modules/
 **/.env
 **/.env.local
 **/.env.*.bak
-infra/env/
 
 # Rehearsal audio written by a local server run (AUDIO_DIR's default)
 apps/server/data/

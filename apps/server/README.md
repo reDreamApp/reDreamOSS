@@ -5,25 +5,31 @@ One Python project with two packages side by side: `redream_api` (FastAPI + asyn
 ## Local dev
 
 ```bash
-cp .env.example .env       # fill in DATABASE_URL, INVITE_CODE, API keys
+make init-env              # from repo root: .env (repo root) from .env.example; then set DATABASE_URL and the LLM_* keys
 uv sync
 make db-migrate            # from repo root: apply migrations/ to DATABASE_URL
-make api-dev               # from repo root: server on :8001 (uv run --env-file .env, if present)
+make api-dev               # from repo root: server on :8001 (uv run --env-file ../../.env, if present)
 ```
 
-The database is any Postgres 16+. Its schema is `migrations/*.sql`, applied in name order by `python -m redream_api.db.migrate` (locally `uv run --env-file .env python -m redream_api.db.migrate`; the container runs it before uvicorn). It needs only `DATABASE_URL`, from the environment (not `.env`), read as the app's engine reads it (`?ssl=require` and the other SQLAlchemy asyncpg options apply to both), over a direct or session-mode connection (it holds an advisory lock for the run; not a transaction pooler). It waits up to 30 s for the database, records each file with its sha256 in `schema_migrations`, and refuses to continue if an applied file has changed: a schema change is a new numbered file (plain SQL, no BEGIN/COMMIT: each file runs in the runner's own transaction) plus the matching ORM change.
+The settings live in one file, `.env` at the repo root (template: [`../../.env.example`](../../.env.example)), shared with the compose stack (`compose.yaml`, which sets `DATABASE_URL` and `AUDIO_DIR` for the container itself).
 
-`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` and `LLM_SMALL_MODEL` are required for chat turns and the crisis check: any OpenAI-compatible chat-completions endpoint, one provider for every text role (examples in `.env.example`). They come from the environment or `.env`; environment variables win.
+The database is any Postgres 16+. Its schema is `migrations/*.sql`, applied in name order by `python -m redream_api.db.migrate` (locally `uv run --env-file ../../.env python -m redream_api.db.migrate`; the container runs it before uvicorn). It needs only `DATABASE_URL`, from the environment (not read from `.env` itself), read as the app's engine reads it (`?ssl=require` and the other SQLAlchemy asyncpg options apply to both), over a direct or session-mode connection (it holds an advisory lock for the run; not a transaction pooler). It waits up to 30 s for the database, records each file with its sha256 in `schema_migrations`, and refuses to continue if an applied file has changed: a schema change is a new numbered file (plain SQL, no BEGIN/COMMIT: each file runs in the runner's own transaction) plus the matching ORM change.
 
-Accounts: `REGISTRATION_MODE` is `invite` by default, and then `INVITE_CODE` (8 to 256 characters) is required or the server does not start; `open` and `closed` are the alternatives. The operator CLI creates users and resets passwords in every mode: `uv run python -m redream_api.cli create-user EMAIL` / `set-password EMAIL` (the password is asked for, or read from stdin with `--password-stdin`). `DAILY_AI_REQUESTS_PER_USER` (default 100, 0 = off) caps chat turns, transcriptions and rehearsal renderings per user per UTC day, in memory.
+`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` and `LLM_SMALL_MODEL` are required for chat turns and the crisis check: any OpenAI-compatible chat-completions endpoint, one provider for every text role (examples in the repo root's `.env.example`). They come from the environment or `.env` (locally `uv run --env-file ../../.env`, in compose the `env_file`); environment variables win.
+
+Accounts: `REGISTRATION_MODE` is `invite` by default, and then `INVITE_CODE` (8 to 256 characters) is required or the server does not start; `open` and `closed` are the alternatives. The operator CLI creates users and resets passwords in every mode: in the compose stack `docker compose exec server python -m redream_api.cli create-user EMAIL` / `set-password EMAIL`, locally (from apps/server) `uv run --env-file ../../.env python -m redream_api.cli create-user EMAIL` (the password is asked for, or read from stdin with `--password-stdin`). `DAILY_AI_REQUESTS_PER_USER` (default 100, 0 = off) caps chat turns, transcriptions and rehearsal renderings per user per UTC day, in memory.
 
 `GET /api/v1/instance` (no login) tells the app what this server is: `INSTANCE_NAME`, the operator (`OPERATOR_NAME`, `OPERATOR_CONTACT`, `PRIVACY_URL`, all optional), the API and consent versions, registration mode, daily cap and which features are configured (chat, transcription, rehearsal audio).
 
 `GET /api/v1/health` answers 200 `{"status": "ok"}` whenever the process is up, with `llm_ready` (the four `LLM_*` settings are set) and `safety_classifier_enabled`.
 
+## Container
+
+`Dockerfile` builds the image `compose.yaml` (repo root) runs: non-root `appuser`, `/app/data/audio` for the rehearsal MP3s (compose mounts its `audio` volume there), a `HEALTHCHECK` on `/api/v1/health`. It applies pending migrations, then starts uvicorn with exactly one worker, no access log and proxy headers on: the client address the rate limits count comes from `X-Forwarded-For` when the peer is in `FORWARDED_ALLOW_IPS` (default `127.0.0.1`; compose sets its own network's subnet: Caddy and the Docker proxy of its 127.0.0.1-only port). uvicorn takes the rightmost entry that is not a trusted proxy, so a client cannot pick its own address, whether the proxy in front sets the header or appends to it; never set `*`, with which uvicorn takes the leftmost. Operator commands run inside it: `docker compose exec server python -m redream_api.cli create-user EMAIL`.
+
 The consent-text version is a code constant (`redream_api.core.consent.CONSENT_VERSION`), not a setting: it must equal the app's `consentTextVersion`.
 
-`HELPLINE_TEXT_EN` / `HELPLINE_TEXT_DE` (the message the app shows when the crisis check flags a message) and `HELPLINE_PROMPT_EN` / `HELPLINE_PROMPT_DE` (the short help reference the chat model names on real distress) are optional; blank keeps a neutral default without country-specific numbers (limits and a German example in `.env.example`).
+`HELPLINE_TEXT_EN` / `HELPLINE_TEXT_DE` (the message the app shows when the crisis check flags a message) and `HELPLINE_PROMPT_EN` / `HELPLINE_PROMPT_DE` (the short help reference the chat model names on real distress) are optional; blank keeps a neutral default without country-specific numbers (limits and a German example in the repo root's `.env.example`).
 
 A chat can switch between English and German mid-chat: before the crisis check, each message passes a cheap word check and, if it looks like (or asks for) the other language, one short `LLM_SMALL_MODEL` call; on a switch the chat continues in that language (crisis check, helpline text and reply included). Any failure keeps the language. A dream keeps the chat's language at the summary, and its rehearsal audio uses it.
 
@@ -47,6 +53,6 @@ Fully offline: in-memory SQLite (aiosqlite) with a `FakeAiClient` for `tests/api
 - `redream_ai.api` — the plain async functions the AI client calls (`chat`, `chat_stream`, `safety_classify`, `language_check`, `transcribe`, `rehearsal_generate`).
 - `redream_ai.core` / `redream_ai.clinical_safety` — vendored IRT engine + `SafetyCritic` (excluded from lint/type rules). Chat/routing/safety-critic models come from `LLM_MODEL` / `LLM_SMALL_MODEL`.
 - `redream_ai.safety.classifier` — crisis classifier on `LLM_SAFETY_MODEL` (default `LLM_SMALL_MODEL`), no fallback; a failed check fails the chat turn.
-- `redream_ai.audio` — TTS + the local MP3 store under `AUDIO_DIR`, STT; one provider each from `STT_*` / `TTS_*` (see `.env.example`), off without a model (the routes answer 503 `voice_unavailable`).
+- `redream_ai.audio` — TTS + the local MP3 store under `AUDIO_DIR`, STT; one provider each from `STT_*` / `TTS_*` (see the repo root's `.env.example`), off without a model (the routes answer 503 `voice_unavailable`).
 
 See [`../../docs/decisions/`](../../docs/decisions/README.md) for the binding architectural decisions.

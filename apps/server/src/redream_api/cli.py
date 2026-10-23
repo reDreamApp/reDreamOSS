@@ -4,7 +4,8 @@
     python -m redream_api.cli set-password EMAIL [--password-stdin]
 
 In a container: docker compose exec server python -m redream_api.cli ...;
-locally: uv run python -m redream_api.cli ...
+locally, from apps/server (the settings are the repo root's .env):
+uv run --env-file ../../.env python -m redream_api.cli ...
 
 The password is asked for twice (not echoed), or read as one line from stdin
 with --password-stdin. Same rules as the API; works in every
