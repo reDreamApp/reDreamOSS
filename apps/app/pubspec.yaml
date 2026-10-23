@@ -25,7 +25,6 @@ dependencies:
   provider: ^6.1.5
   record: ^6.2.1
   shared_preferences: ^2.5.3
-  supabase_flutter: ^2.9.1
   timezone: ^0.10.1
   url_launcher: ^6.3.2
 

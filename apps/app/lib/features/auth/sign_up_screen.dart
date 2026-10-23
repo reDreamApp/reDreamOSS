@@ -22,15 +22,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
+  final _invite = TextEditingController();
   bool _busy = false;
   String? _error;
-  bool _confirmEmail = false;
 
   @override
   void dispose() {
     _email.dispose();
     _password.dispose();
     _confirm.dispose();
+    _invite.dispose();
     super.dispose();
   }
 
@@ -44,20 +45,28 @@ class _SignUpScreenState extends State<SignUpScreen> {
     setState(() {
       _busy = true;
       _error = null;
-      _confirmEmail = false;
     });
     final auth = context.read<AuthService>();
     final settings = context.read<AppSettings>();
+    final invite = _invite.text.trim();
     try {
-      await auth.signUp(email: _email.text.trim(), password: _password.text);
+      await auth.signUp(
+        email: _email.text.trim(),
+        password: _password.text,
+        inviteCode: invite,
+      );
       TextInput.finishAutofillContext();
-      final userId = auth.userId;
-      if (userId != null) {
+      // Registering signs in right away; there is no confirmation mail.
+      if (auth.userId case final userId?) {
         await settings.markOnboardingPending(userId);
         if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
-      } else if (mounted) {
-        setState(() => _confirmEmail = true);
       }
+    } on AuthFailure catch (e) {
+      // An invite-only server refuses a missing code like a wrong one.
+      final message = e.kind == AuthFailureKind.inviteInvalid && invite.isEmpty
+          ? l10n.authInviteRequired
+          : describeError(e, l10n);
+      if (mounted) setState(() => _error = message);
     } on Exception catch (e) {
       if (mounted) setState(() => _error = describeError(e, l10n));
     } finally {
@@ -98,18 +107,25 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     label: l10n.signUpConfirmPassword,
                     isNewPassword: true,
                     validator: (v) => validateConfirm(v, _password.text, l10n),
-                    onSubmitted: (_) => _submit(),
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _invite,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    textInputAction: TextInputAction.done,
+                    onFieldSubmitted: (_) => _submit(),
+                    decoration: InputDecoration(
+                      labelText: l10n.signUpInviteCode,
+                      helperText: l10n.signUpInviteCodeHint,
+                      helperMaxLines: 2,
+                      prefixIcon: const Icon(Icons.vpn_key_outlined),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   if (_error != null) ...[
                     InlineNotice(message: _error!),
-                    const SizedBox(height: 16),
-                  ],
-                  if (_confirmEmail) ...[
-                    InlineNotice(
-                      message: l10n.signUpConfirmEmail,
-                      error: false,
-                    ),
                     const SizedBox(height: 16),
                   ],
                   AppButton(

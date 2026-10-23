@@ -1,9 +1,10 @@
 /// Live smoke test: drives the REAL app against a running stack.
 ///
 /// Prerequisites:
-///   - Supabase (local `supabase start` or the self-hosted box)
-///   - apps/ai and apps/api reachable at `API_BASE_URL` from apps/app/.env
-///   - a confirmed test user, by default test@local.dev / Test-12345-chat
+///   - apps/server reachable at `API_BASE_URL` from apps/app/.env
+///   - a test user made with the server's operator CLI
+///     (`python -m redream_api.cli create-user test@local.dev`), by default
+///     test@local.dev / Test-12345-chat
 ///     (override with --dart-define=SMOKE_EMAIL=... --dart-define=SMOKE_PASSWORD=...)
 ///
 /// Run: `fvm flutter test integration_test/live_smoke_test.dart -d <device>`
@@ -56,7 +57,8 @@ void main() {
   testWidgets('sign in, consent, chat turn with a streamed AI reply', (
     tester,
   ) async {
-    // In-memory prefs keep runs hermetic: no persisted session or settings.
+    // In-memory prefs keep settings hermetic; a stored session is signed out
+    // below.
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await app.main();
     await tester.pump(const Duration(seconds: 1));
@@ -70,8 +72,7 @@ void main() {
       description: 'first screen',
     );
 
-    // Always start from a fresh sign-in: a persisted session may carry an
-    // already-rotated refresh token that GoTrue revokes mid-test.
+    // Always start from a fresh sign-in, so the run also covers login.
     final auth = tester.element(find.byType(MaterialApp)).read<AuthService>();
     if (auth.isSignedIn) {
       await auth.signOut();

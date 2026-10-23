@@ -5,7 +5,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:redream_app/core/storage/local_cipher.dart';
 import 'package:redream_app/core/storage/local_store.dart';
-import 'package:redream_app/core/storage/secure_session_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -74,23 +73,6 @@ void main() {
         ),
         throwsA(isA<SecretBoxAuthenticationError>()),
       );
-    },
-  );
-
-  test(
-    'migrates session then writes and removes only in secure storage',
-    () async {
-      const key = 'sb-example-auth-token';
-      SharedPreferences.setMockInitialValues({key: 'legacy refresh token'});
-      const sessions = SecureSessionStorage(key);
-      await sessions.initialize();
-      expect(await sessions.accessToken(), 'legacy refresh token');
-      expect((await SharedPreferences.getInstance()).containsKey(key), isFalse);
-      await sessions.persistSession('new refresh token');
-      expect(await sessions.accessToken(), 'new refresh token');
-      expect(await sessions.hasAccessToken(), isTrue);
-      await sessions.removePersistedSession();
-      expect(await sessions.hasAccessToken(), isFalse);
     },
   );
 }

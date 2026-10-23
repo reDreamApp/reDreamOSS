@@ -188,6 +188,156 @@ void main() {
     );
   });
 
+  testWidgets('sign-up sends the invite code and goes to onboarding', (
+    tester,
+  ) async {
+    final auth = FakeAuth();
+    final (app, _, settings) = await _app(auth: auth);
+    _tallPhone(tester);
+    await tester.pumpWidget(app);
+    await _settle(tester);
+
+    await tester.tap(find.text("Don't have an account? Sign up"));
+    await _settle(tester);
+    await tester.enterText(find.byType(TextFormField).at(0), 'new@example.com');
+    await tester.enterText(find.byType(TextFormField).at(1), 'a-good-password');
+    await tester.enterText(find.byType(TextFormField).at(2), 'a-good-password');
+    await tester.enterText(
+      find.widgetWithText(TextFormField, _en.signUpInviteCode),
+      'let-me-in',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign up'));
+    await _settle(tester);
+
+    expect(auth.signUps, [(email: 'new@example.com', inviteCode: 'let-me-in')]);
+    expect(settings.needsOnboarding('user-new'), isTrue);
+    expect(find.text(_en.signUpAgeNote), findsNothing);
+  });
+
+  testWidgets('sign-up asks for 8 characters and explains refusals', (
+    tester,
+  ) async {
+    final auth = FakeAuth()
+      ..error = const AuthFailure(AuthFailureKind.inviteInvalid);
+    final (app, _, _) = await _app(auth: auth);
+    _tallPhone(tester);
+    await tester.pumpWidget(app);
+    await _settle(tester);
+
+    await tester.tap(find.text("Don't have an account? Sign up"));
+    await _settle(tester);
+    await tester.enterText(find.byType(TextFormField).at(0), 'new@example.com');
+    await tester.enterText(find.byType(TextFormField).at(1), 'seven77');
+    await tester.enterText(find.byType(TextFormField).at(2), 'seven77');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign up'));
+    await _settle(tester);
+    expect(find.text(_en.validationPasswordMin(8)), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField).at(1), 'a-good-password');
+    await tester.enterText(find.byType(TextFormField).at(2), 'a-good-password');
+    await tester.enterText(
+      find.widgetWithText(TextFormField, _en.signUpInviteCode),
+      'not-a-code',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign up'));
+    await _settle(tester);
+    expect(find.text(_en.authInviteInvalid), findsOneWidget);
+    expect(auth.isSignedIn, isFalse);
+  });
+
+  testWidgets('sign-up without a code says the server needs one', (
+    tester,
+  ) async {
+    // An invite-only server answers a missing code like a wrong one.
+    final auth = FakeAuth()
+      ..error = const AuthFailure(AuthFailureKind.inviteInvalid);
+    final (app, _, _) = await _app(auth: auth);
+    _tallPhone(tester);
+    await tester.pumpWidget(app);
+    await _settle(tester);
+
+    await tester.tap(find.text("Don't have an account? Sign up"));
+    await _settle(tester);
+    await tester.enterText(find.byType(TextFormField).at(0), 'new@example.com');
+    await tester.enterText(find.byType(TextFormField).at(1), 'a-good-password');
+    await tester.enterText(find.byType(TextFormField).at(2), 'a-good-password');
+    await tester.enterText(
+      find.widgetWithText(TextFormField, _en.signUpInviteCode),
+      '  ',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign up'));
+    await _settle(tester);
+
+    expect(
+      find.text(
+        'This server needs an invite code. Please enter the one you were '
+        'given.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text(_en.authInviteInvalid), findsNothing);
+  });
+
+  testWidgets('sign-in explains wrong credentials', (tester) async {
+    final auth = FakeAuth()
+      ..error = const AuthFailure(AuthFailureKind.invalidCredentials);
+    final (app, _, _) = await _app(auth: auth);
+    _tallPhone(tester);
+    await tester.pumpWidget(app);
+    await _settle(tester);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'me@example.com');
+    await tester.enterText(find.byType(TextFormField).at(1), 'not-my-password');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await _settle(tester);
+
+    expect(find.text(_en.signInError), findsOneWidget);
+    expect(auth.isSignedIn, isFalse);
+  });
+
+  testWidgets('sign-in shows the wait after too many attempts', (
+    tester,
+  ) async {
+    final auth = FakeAuth()
+      ..error = const AuthFailure(
+        AuthFailureKind.tooManyAttempts,
+        retryAfterSeconds: 540,
+      );
+    final (app, _, _) = await _app(auth: auth);
+    _tallPhone(tester);
+    await tester.pumpWidget(app);
+    await _settle(tester);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'me@example.com');
+    await tester.enterText(find.byType(TextFormField).at(1), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await _settle(tester);
+
+    expect(
+      find.text(
+        'Too many attempts. Please try again in 9 minutes.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('forgot password says who can reset it', (tester) async {
+    final (app, api, _) = await _app(auth: FakeAuth());
+    _tallPhone(tester);
+    await tester.pumpWidget(app);
+    await _settle(tester);
+
+    await tester.tap(find.text('Forgot password?'));
+    await _settle(tester);
+
+    expect(find.text(_en.forgotPasswordBody), findsOneWidget);
+    expect(find.byType(TextFormField), findsNothing);
+    await tester.tap(find.text('Back to sign in'));
+    await _settle(tester);
+    expect(find.text('Forgot password?'), findsOneWidget);
+    expect(api.calls, isEmpty);
+  });
+
   testWidgets('home shows progress from the API and tabs switch screens', (
     tester,
   ) async {

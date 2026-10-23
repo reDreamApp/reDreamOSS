@@ -1,9 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Session state the UI listens to. Implemented by [SupabaseAuthService] in
+/// Session state the UI listens to. Implemented by `TokenAuthService` in
 /// production and by fakes in tests.
 abstract class AuthService extends ChangeNotifier {
   String? get accessToken;
@@ -12,57 +9,50 @@ abstract class AuthService extends ChangeNotifier {
   bool get isSignedIn => userId != null;
 
   Future<void> signIn({required String email, required String password});
-  Future<void> signUp({required String email, required String password});
+  Future<void> signUp({
+    required String email,
+    required String password,
+    String? inviteCode,
+  });
+
+  /// Always ends the local session, even when the server cannot be reached.
   Future<void> signOut();
-  Future<void> refreshSession();
-  Future<void> updateEmail(String email, {required String redirectUrl});
-  Future<void> updatePassword(String password);
+
+  /// A request carrying [usedToken] got a 401. True when the same user holds
+  /// a different token now (retry with it). A session that is not
+  /// [usedToken]'s is kept; [usedToken]'s own session is cleared.
+  Future<bool> onUnauthorized(String? usedToken);
+  Future<void> updateEmail({
+    required String currentPassword,
+    required String newEmail,
+  });
+  Future<void> updatePassword({
+    required String currentPassword,
+    required String newPassword,
+  });
 }
 
-class SupabaseAuthService extends AuthService {
-  SupabaseAuthService(this._client) {
-    _sub = _client.auth.onAuthStateChange.listen((_) => notifyListeners());
-  }
+enum AuthFailureKind {
+  invalidCredentials,
+  emailTaken,
+  registrationClosed,
+  inviteInvalid,
+  wrongPassword,
+  tooManyAttempts,
+  invalidInput,
+  sessionExpired,
+  other,
+}
 
-  final SupabaseClient _client;
-  late final StreamSubscription<AuthState> _sub;
+/// A refused auth request, already told apart for the UI.
+class AuthFailure implements Exception {
+  const AuthFailure(this.kind, {this.retryAfterSeconds});
 
-  GoTrueClient get _auth => _client.auth;
+  final AuthFailureKind kind;
 
-  @override
-  String? get accessToken => _auth.currentSession?.accessToken;
-
-  @override
-  String? get userId => _auth.currentUser?.id;
-
-  @override
-  String? get email => _auth.currentUser?.email;
-
-  @override
-  Future<void> signIn({required String email, required String password}) =>
-      _auth.signInWithPassword(email: email, password: password);
+  /// Only for [AuthFailureKind.tooManyAttempts], when the server says.
+  final int? retryAfterSeconds;
 
   @override
-  Future<void> signUp({required String email, required String password}) =>
-      _auth.signUp(email: email, password: password);
-
-  @override
-  Future<void> signOut() => _auth.signOut();
-
-  @override
-  Future<void> refreshSession() => _auth.refreshSession();
-
-  @override
-  Future<void> updateEmail(String email, {required String redirectUrl}) => _auth
-      .updateUser(UserAttributes(email: email), emailRedirectTo: redirectUrl);
-
-  @override
-  Future<void> updatePassword(String password) =>
-      _auth.updateUser(UserAttributes(password: password));
-
-  @override
-  void dispose() {
-    unawaited(_sub.cancel());
-    super.dispose();
-  }
+  String toString() => 'AuthFailure(${kind.name})';
 }

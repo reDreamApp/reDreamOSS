@@ -7,30 +7,36 @@ import 'package:http/http.dart' as http;
 import 'package:redream_app/core/api/api_exception.dart';
 
 typedef TokenProvider = String? Function();
-typedef SessionRefresher = Future<void> Function();
+
+/// Told which token a request carried when it got a 401; true to retry once
+/// with the token held now.
+typedef UnauthorizedHandler = Future<bool> Function(String? usedToken);
 
 /// Calls that wait on the LLM: the backend allows the AI service 90s.
 const aiTimeout = Duration(seconds: 100);
 
-/// JSON client for `apps/api`. Adds the bearer token, maps transport failures
-/// to [NetworkException], non-2xx to [ApiException], and retries once after a
-/// session refresh on 401.
+/// JSON client for `apps/server`. Adds the bearer token, maps transport
+/// failures to [NetworkException], non-2xx to [ApiException], and on a 401
+/// asks [UnauthorizedHandler] whether to retry once.
 class ApiClient {
   ApiClient({
     required String baseUrl,
     required TokenProvider tokenProvider,
-    SessionRefresher? refreshSession,
+    UnauthorizedHandler? onUnauthorized,
     http.Client? httpClient,
     Duration timeout = const Duration(seconds: 30),
   }) : _baseUrl = baseUrl.replaceAll(RegExp(r'/+$'), ''),
        _tokenProvider = tokenProvider,
-       _refreshSession = refreshSession,
+       _onUnauthorized = onUnauthorized,
        _http = httpClient ?? http.Client(),
        _timeout = timeout;
 
+  /// A 401 here is a wrong password, not an ended session.
+  static const _signInPaths = {'/api/v1/auth/login', '/api/v1/auth/register'};
+
   final String _baseUrl;
   final TokenProvider _tokenProvider;
-  final SessionRefresher? _refreshSession;
+  final UnauthorizedHandler? _onUnauthorized;
   final http.Client _http;
   final Duration _timeout;
 
@@ -59,19 +65,17 @@ class ApiClient {
   /// as utf8 text chunks. Errors before the stream starts surface as the same
   /// [ApiException] / [NetworkException] the JSON calls throw.
   Stream<String> postStream(String path, Object? body) async* {
-    Future<http.StreamedResponse> open() {
-      final request = http.Request('POST', _uri(path, null))
-        ..headers.addAll(_headers(json: true))
-        ..headers['Accept'] = 'text/event-stream';
-      if (body != null) request.body = jsonEncode(body);
-      return _guard(() => _http.send(request).timeout(aiTimeout));
-    }
-
-    var res = await open();
-    if (res.statusCode == 401 && await _tryRefresh()) {
-      await res.stream.drain<void>();
-      res = await open();
-    }
+    final res = await _authorized(
+      path,
+      (token) {
+        final request = http.Request('POST', _uri(path, null))
+          ..headers.addAll(_headers(token, json: true))
+          ..headers['Accept'] = 'text/event-stream';
+        if (body != null) request.body = jsonEncode(body);
+        return _guard(() => _http.send(request).timeout(aiTimeout));
+      },
+      discard: (res) => res.stream.drain<void>(),
+    );
     if (res.statusCode < 200 || res.statusCode >= 300) {
       _decode(await http.Response.fromStream(res));
     }
@@ -84,21 +88,21 @@ class ApiClient {
     required List<int> bytes,
     required String fileName,
   }) async {
-    Future<http.Response> send() {
-      final request = http.MultipartRequest('POST', _uri(path, null))
-        ..headers.addAll(_headers())
-        ..files.add(
-          http.MultipartFile.fromBytes('file', bytes, filename: fileName),
+    final res = await _authorized(
+      path,
+      (token) {
+        final request = http.MultipartRequest('POST', _uri(path, null))
+          ..headers.addAll(_headers(token))
+          ..files.add(
+            http.MultipartFile.fromBytes('file', bytes, filename: fileName),
+          );
+        return _guard(
+          () async => http.Response.fromStream(
+            await _http.send(request).timeout(aiTimeout),
+          ),
         );
-      return _guard(
-        () async => http.Response.fromStream(
-          await _http.send(request).timeout(aiTimeout),
-        ),
-      );
-    }
-
-    var res = await send();
-    if (res.statusCode == 401 && await _tryRefresh()) res = await send();
+      },
+    );
     return _map(Future.value(_decode(res)));
   }
 
@@ -110,36 +114,46 @@ class ApiClient {
     Duration? timeout,
   }) async {
     final uri = _uri(path, query);
-    var res = await _send(method, uri, body, timeout ?? _timeout);
-    if (res.statusCode == 401 && await _tryRefresh()) {
-      res = await _send(method, uri, body, timeout ?? _timeout);
-    }
+    final res = await _authorized(
+      path,
+      (token) => _send(method, uri, body, timeout ?? _timeout, token),
+    );
     return _decode(res);
+  }
+
+  /// Sends with the current token. On a 401 the handler hears which token
+  /// was used; a retry happens at most once, and only when it says so. A 401
+  /// on the retry is reported too, so that session ends as well.
+  Future<R> _authorized<R extends http.BaseResponse>(
+    String path,
+    Future<R> Function(String? token) send, {
+    Future<void> Function(R)? discard,
+  }) async {
+    final handler = _onUnauthorized;
+    final token = _tokenProvider();
+    final res = await send(token);
+    if (res.statusCode != 401 ||
+        handler == null ||
+        _signInPaths.contains(path.startsWith('/') ? path : '/$path') ||
+        !await handler(token)) {
+      return res;
+    }
+    await discard?.call(res);
+    final retryToken = _tokenProvider();
+    final retried = await send(retryToken);
+    if (retried.statusCode == 401) await handler(retryToken);
+    return retried;
   }
 
   Uri _uri(String path, Map<String, String>? query) => Uri.parse(
     '$_baseUrl${path.startsWith('/') ? '' : '/'}$path',
   ).replace(queryParameters: query == null || query.isEmpty ? null : query);
 
-  Map<String, String> _headers({bool json = false}) {
-    final token = _tokenProvider();
-    return {
-      'Accept': 'application/json',
-      if (json) 'Content-Type': 'application/json',
-      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-    };
-  }
-
-  Future<bool> _tryRefresh() async {
-    final refresh = _refreshSession;
-    if (refresh == null) return false;
-    try {
-      await refresh();
-      return true;
-    } on Exception {
-      return false;
-    }
-  }
+  Map<String, String> _headers(String? token, {bool json = false}) => {
+    'Accept': 'application/json',
+    if (json) 'Content-Type': 'application/json',
+    if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+  };
 
   /// Maps transport failures to [NetworkException].
   static Future<T> _guard<T>(Future<T> Function() call) async {
@@ -159,8 +173,9 @@ class ApiClient {
     Uri uri,
     Object? body,
     Duration timeout,
+    String? token,
   ) async {
-    final headers = _headers(json: body != null);
+    final headers = _headers(token, json: body != null);
     final encoded = body == null ? null : jsonEncode(body);
     return _guard(() {
       final future = switch (method) {

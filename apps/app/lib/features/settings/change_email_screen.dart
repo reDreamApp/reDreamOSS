@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
-import 'package:redream_app/core/env.dart';
 import 'package:redream_app/core/utils/errors.dart';
 import 'package:redream_app/core/widgets/app_button.dart';
 import 'package:redream_app/core/widgets/feedback.dart';
@@ -21,12 +20,14 @@ class _ChangeEmailScreenState extends State<ChangeEmailScreen> {
   late final _email = TextEditingController(
     text: context.read<AuthService>().email ?? '',
   );
+  final _password = TextEditingController();
   bool _busy = false;
   String? _error;
 
   @override
   void dispose() {
     _email.dispose();
+    _password.dispose();
     super.dispose();
   }
 
@@ -44,13 +45,12 @@ class _ChangeEmailScreenState extends State<ChangeEmailScreen> {
       _error = null;
     });
     try {
-      await auth.updateEmail(newEmail, redirectUrl: Env.emailChangeRedirectUrl);
-      if (!mounted) return;
-      showAppSnackBar(
-        context,
-        l10n.changeEmailSent,
-        duration: const Duration(seconds: 6),
+      await auth.updateEmail(
+        currentPassword: _password.text,
+        newEmail: newEmail,
       );
+      if (!mounted) return;
+      showAppSnackBar(context, l10n.changeEmailSuccess);
       Navigator.pop(context);
     } on Exception catch (e) {
       if (mounted) setState(() => _error = describeError(e, l10n));
@@ -70,12 +70,21 @@ class _ChangeEmailScreenState extends State<ChangeEmailScreen> {
       children: [
         Form(
           key: _form,
-          child: AuthEmailField(
-            controller: _email,
-            label: l10n.settingsEmail,
-            isUsername: false,
-            textInputAction: TextInputAction.done,
-            onSubmitted: (_) => _submit(),
+          child: Column(
+            children: [
+              AuthEmailField(
+                controller: _email,
+                label: l10n.settingsEmail,
+                isUsername: false,
+              ),
+              const SizedBox(height: 12),
+              AuthPasswordField(
+                controller: _password,
+                label: l10n.currentPassword,
+                hint: '',
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 16),

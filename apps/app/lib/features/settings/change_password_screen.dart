@@ -7,7 +7,6 @@ import 'package:redream_app/core/widgets/feedback.dart';
 import 'package:redream_app/features/auth/auth_fields.dart';
 import 'package:redream_app/features/settings/_form_page.dart';
 import 'package:redream_app/l10n/generated/app_localizations.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' show AuthException;
 
 class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({super.key});
@@ -40,28 +39,18 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       setState(() => _error = l10n.changePasswordSame);
       return;
     }
-    final email = auth.email;
-    if (email == null) {
-      setState(() => _error = l10n.changePasswordNoUser);
-      return;
-    }
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await auth.signIn(email: email, password: _current.text);
-      await auth.updatePassword(_next.text);
+      await auth.updatePassword(
+        currentPassword: _current.text,
+        newPassword: _next.text,
+      );
       if (!mounted) return;
       showAppSnackBar(context, l10n.changePasswordSuccess);
       Navigator.pop(context);
-    } on AuthException catch (e) {
-      if (!mounted) return;
-      setState(
-        () => _error = e.message.contains('Invalid login credentials')
-            ? l10n.changePasswordWrongCurrent
-            : describeError(e, l10n),
-      );
     } on Exception catch (e) {
       if (mounted) setState(() => _error = describeError(e, l10n));
     } finally {

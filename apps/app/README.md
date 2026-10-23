@@ -1,13 +1,13 @@
 # apps/app — reDreamAI Flutter client
 
-Flutter mobile app (iOS + Android). Talks to `apps/api`, which talks to `apps/ai`.
+Flutter mobile app (iOS + Android). Talks to `apps/server`, which also signs users in.
 
 ## Setup
 
 ```bash
 fvm use                       # Flutter version pinned in .fvmrc
 fvm flutter pub get           # also generates lib/l10n/generated/
-cp .env.example .env          # then fill in SUPABASE_* and API_BASE_URL
+cp .env.example .env          # then set API_BASE_URL
 ```
 
 ## Run / check
@@ -20,8 +20,13 @@ fvm dart format .
 ```
 
 Backend dev URL: `http://localhost:8001` (iOS simulator / desktop),
-`http://10.0.2.2:8001` (Android emulator). Sign-in goes straight to Supabase;
-the API verifies the resulting JWT.
+`http://10.0.2.2:8001` (Android emulator). Sign-in is the server's own
+email/password login: it returns an opaque bearer token, kept in the secure
+storage together with the server it belongs to. The server slides the token
+on use, so the app never expires it itself; a 401 signs out. Test users come
+from the server's operator CLI (`python -m redream_api.cli create-user EMAIL`,
+see `apps/server/README.md`); it also resets passwords, since the server sends
+no mail.
 
 ## Layout
 
@@ -30,8 +35,8 @@ lib/
   main.dart            bootstrap + dependency wiring
   app.dart             MaterialApp, theme/locale, AuthGate → UserScope → consent gate → onboarding or shell
   core/                app-wide plumbing, no feature knowledge
-    api/               ApiClient (JSON, SSE stream, multipart; bearer token, 401 refresh, error mapping)
-    auth/              AuthService (Supabase session as a ChangeNotifier)
+    api/               ApiClient (JSON, SSE stream, multipart; bearer token, 401 hook, error mapping)
+    auth/              AuthService (ChangeNotifier), TokenAuthService (/api/v1/auth), SessionStore
     settings/          AppSettings (theme mode, language, onboarding flag)
     storage/           LocalStore (shared_preferences as JSON key/value)
     theme/             brand palette, BrandTheme extension, light/dark ThemeData
@@ -45,7 +50,7 @@ lib/
     journal/           dreams: offline-capable JournalState, cards, detail, editor, practice (reading/audio)
     reminders/         daily local notification + settings tile
     settings/          profile, account (email/password/export/delete), help center, privacy policy
-    auth/              sign in / sign up / forgot password
+    auth/              sign in / sign up (invite code) / forgot password note
     onboarding/        post-sign-up intro + profile questions
     learn/             the Learning tab: the team's study and the website's blog articles (meta.json), each with a page in the app and a link to the browser
   l10n/                app_en.arb / app_de.arb (every user-facing string)

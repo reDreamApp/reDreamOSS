@@ -1,27 +1,34 @@
 import 'package:redream_app/core/api/api_exception.dart';
+import 'package:redream_app/core/auth/auth_service.dart';
 import 'package:redream_app/l10n/generated/app_localizations.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' show AuthException;
 
 /// One user-facing sentence for any failure the services can throw.
 String describeError(Object error, AppLocalizations l10n) => switch (error) {
   NetworkException() => l10n.errorOffline,
+  AuthFailure() => _authMessage(error, l10n),
   ApiException(isRateLimited: true) => l10n.errorRateLimited,
+  // The 401 hook has already ended the session.
+  ApiException(isUnauthorized: true) => l10n.authSessionExpired,
   ApiException(:final message) when message.isNotEmpty => message,
-  AuthException(:final message) =>
-    _looksOffline(message) ? l10n.errorOffline : message,
   _ => l10n.errorUnknown,
 };
 
-bool isOffline(Object error) =>
-    error is NetworkException ||
-    (error is AuthException && _looksOffline(error.message));
+bool isOffline(Object error) => error is NetworkException;
 
-bool _looksOffline(String message) {
-  final m = message.toLowerCase();
-  return m.contains('socketexception') ||
-      m.contains('failed host lookup') ||
-      m.contains('clientexception') ||
-      m.contains('connection refused') ||
-      m.contains('network error') ||
-      m.contains('connection reset');
-}
+String _authMessage(AuthFailure failure, AppLocalizations l10n) =>
+    switch (failure.kind) {
+      AuthFailureKind.invalidCredentials => l10n.signInError,
+      AuthFailureKind.emailTaken => l10n.authEmailTaken,
+      AuthFailureKind.registrationClosed => l10n.authRegistrationClosed,
+      AuthFailureKind.inviteInvalid => l10n.authInviteInvalid,
+      AuthFailureKind.wrongPassword => l10n.changePasswordWrongCurrent,
+      AuthFailureKind.tooManyAttempts => switch (failure.retryAfterSeconds) {
+        final seconds? when seconds > 0 => l10n.authTooManyAttemptsMinutes(
+          (seconds / 60).ceil(),
+        ),
+        _ => l10n.authTooManyAttempts,
+      },
+      AuthFailureKind.invalidInput => l10n.authInvalidInput,
+      AuthFailureKind.sessionExpired => l10n.authSessionExpired,
+      AuthFailureKind.other => l10n.errorUnknown,
+    };

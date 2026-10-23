@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:redream_app/core/api/api_exception.dart';
 
 import 'fake_api.dart';
@@ -43,20 +44,148 @@ void main() {
     },
   );
 
-  test('refreshes the session once on 401 and retries', () async {
-    var attempts = 0;
-    final api = FakeApi()
-      ..on('GET /api/v1/me', (_, _) {
-        attempts++;
-        if (attempts == 1) throw FakeApiError(401, 'expired');
-        return {'ok': true};
-      });
-    var refreshed = 0;
-    final client = api.client(refreshSession: () async => refreshed++);
+  group('401 hook', () {
+    late FakeApi api;
+    late String token;
+    late List<String?> hookCalls;
+    late List<String?> sentTokens;
 
-    expect(await client.get('/api/v1/me'), {'ok': true});
-    expect(refreshed, 1);
-    expect(attempts, 2);
+    /// Like TokenAuthService for one user: retry only when another token is
+    /// held now.
+    Future<bool> hook(String? used) async {
+      hookCalls.add(used);
+      return token != used;
+    }
+
+    setUp(() {
+      token = 'old';
+      hookCalls = [];
+      sentTokens = [];
+      api = FakeApi();
+    });
+
+    Object? reject(http.Request request, [String? signInAs]) {
+      sentTokens.add(request.headers['Authorization']);
+      if (signInAs != null) token = signInAs;
+      throw FakeApiError(401, 'not authenticated');
+    }
+
+    test('retries once with the token held now', () async {
+      api.on('GET /api/v1/me', (request, _) {
+        if (request.headers['Authorization'] == 'Bearer new') {
+          sentTokens.add('Bearer new');
+          return {'ok': true};
+        }
+        // The user signed in again while this request was under way.
+        return reject(request, 'new');
+      });
+      final client = api.client(
+        tokenProvider: () => token,
+        onUnauthorized: hook,
+      );
+
+      expect(await client.get('/api/v1/me'), {'ok': true});
+      expect(hookCalls, ['old']);
+      expect(sentTokens, ['Bearer old', 'Bearer new']);
+    });
+
+    test('does not retry when the token is unchanged', () async {
+      api.on('GET /api/v1/me', (request, _) => reject(request));
+      final client = api.client(
+        tokenProvider: () => token,
+        onUnauthorized: hook,
+      );
+
+      await expectLater(
+        client.get('/api/v1/me'),
+        throwsA(isA<ApiException>().having((e) => e.statusCode, 'status', 401)),
+      );
+      expect(hookCalls, ['old']);
+      expect(sentTokens, ['Bearer old']);
+    });
+
+    test('retries at most once', () async {
+      api.on('POST /api/v1/me', (request, _) => reject(request));
+      final client = api.client(
+        tokenProvider: () => token,
+        onUnauthorized: (used) async {
+          hookCalls.add(used);
+          return true;
+        },
+      );
+
+      await expectLater(
+        client.post('/api/v1/me', {'x': 1}),
+        throwsA(isA<ApiException>()),
+      );
+      // The refused retry is reported, but not sent a third time.
+      expect(hookCalls, ['old', 'old']);
+      expect(sentTokens, hasLength(2));
+    });
+
+    test('a refused retry reports its own token', () async {
+      api.on(
+        'GET /api/v1/me',
+        (request, _) => reject(
+          request,
+          request.headers['Authorization'] == 'Bearer old' ? 'new' : null,
+        ),
+      );
+      final client = api.client(
+        tokenProvider: () => token,
+        onUnauthorized: hook,
+      );
+
+      await expectLater(
+        client.get('/api/v1/me'),
+        throwsA(isA<ApiException>().having((e) => e.statusCode, 'status', 401)),
+      );
+      expect(hookCalls, ['old', 'new']);
+      expect(sentTokens, ['Bearer old', 'Bearer new']);
+    });
+
+    test('a streamed request retries with the new token too', () async {
+      api.on('POST /api/v1/chats/1/message/stream', (request, _) {
+        if (request.headers['Authorization'] == 'Bearer new') {
+          return SseBody([
+            {'content': 'hi'},
+          ]);
+        }
+        return reject(request, 'new');
+      });
+      final client = api.client(
+        tokenProvider: () => token,
+        onUnauthorized: hook,
+      );
+
+      final text = await client.postStream('/api/v1/chats/1/message/stream', {
+        'content': 'x',
+      }).join();
+      expect(text, contains('hi'));
+      expect(hookCalls, ['old']);
+    });
+
+    test('a 401 from login or register never reaches the hook', () async {
+      api
+        ..on('POST /api/v1/auth/login', (request, _) => reject(request, 'x'))
+        ..on(
+          'POST /api/v1/auth/register',
+          (request, _) => reject(request, 'x'),
+        );
+      final client = api.client(
+        tokenProvider: () => token,
+        onUnauthorized: hook,
+      );
+
+      for (final path in ['/api/v1/auth/login', 'api/v1/auth/register']) {
+        await expectLater(
+          client.post(path, {'email': 'a@b.cd', 'password': 'wrong-one'}),
+          throwsA(isA<ApiException>()),
+        );
+      }
+      expect(hookCalls, isEmpty);
+      expect(sentTokens, hasLength(2));
+    });
   });
 
   test('delete tolerates empty 204 bodies', () async {

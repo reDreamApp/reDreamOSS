@@ -19,13 +19,17 @@ class FakeApi {
 
   void on(String route, Handler handler) => routes[route] = handler;
 
-  ApiClient client({Future<void> Function()? refreshSession, String? token}) =>
-      ApiClient(
-        baseUrl: 'http://fake',
-        tokenProvider: () => token,
-        refreshSession: refreshSession,
-        httpClient: MockClient(_handle),
-      );
+  /// [tokenProvider] wins over the fixed [token].
+  ApiClient client({
+    String? token,
+    TokenProvider? tokenProvider,
+    UnauthorizedHandler? onUnauthorized,
+  }) => ApiClient(
+    baseUrl: 'http://fake',
+    tokenProvider: tokenProvider ?? () => token,
+    onUnauthorized: onUnauthorized,
+    httpClient: MockClient(_handle),
+  );
 
   Future<http.Response> _handle(http.Request request) async {
     if (offline) throw http.ClientException('offline', request.url);

@@ -16,7 +16,14 @@ String? validateEmail(String? value, AppLocalizations l10n) {
   return null;
 }
 
-String? validatePassword(String? value, AppLocalizations l10n, {int min = 6}) {
+/// The server's minimum for a new password.
+const passwordMinLength = 8;
+
+String? validatePassword(
+  String? value,
+  AppLocalizations l10n, {
+  int min = passwordMinLength,
+}) {
   final v = value ?? '';
   if (v.isEmpty) return l10n.validationRequired(l10n.signInPassword);
   if (v.length < min) return l10n.validationPasswordMin(min);
@@ -118,7 +125,14 @@ class _AuthPasswordFieldState extends State<AuthPasswordField> {
         else
           AutofillHints.password,
       ],
-      validator: widget.validator ?? (v) => validatePassword(v, l10n),
+      // Only a new password has a length rule; one to check just needs input.
+      validator:
+          widget.validator ??
+          (v) => validatePassword(
+            v,
+            l10n,
+            min: widget.isNewPassword ? passwordMinLength : 1,
+          ),
       onFieldSubmitted: widget.onSubmitted,
       decoration: InputDecoration(
         labelText: widget.label ?? l10n.signInPassword,

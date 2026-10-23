@@ -8,13 +8,20 @@ class FakeAuth extends AuthService {
   @override
   String? email;
 
+  /// Thrown by the next sign-in, sign-up or account change when set.
+  Exception? error;
+
   final signIns = <String>[];
+  final signUps = <({String email, String? inviteCode})>[];
+  final passwordChanges = <({String current, String next})>[];
+  final emailChanges = <({String current, String email})>[];
 
   @override
   String? get accessToken => userId == null ? null : 'token-$userId';
 
   @override
   Future<void> signIn({required String email, required String password}) async {
+    _throwIfFailing();
     signIns.add(email);
     userId = 'user-1';
     this.email = email;
@@ -22,7 +29,13 @@ class FakeAuth extends AuthService {
   }
 
   @override
-  Future<void> signUp({required String email, required String password}) async {
+  Future<void> signUp({
+    required String email,
+    required String password,
+    String? inviteCode,
+  }) async {
+    _throwIfFailing();
+    signUps.add((email: email, inviteCode: inviteCode));
     userId = 'user-new';
     this.email = email;
     notifyListeners();
@@ -36,11 +49,29 @@ class FakeAuth extends AuthService {
   }
 
   @override
-  Future<void> refreshSession() async {}
+  Future<bool> onUnauthorized(String? usedToken) async => false;
 
   @override
-  Future<void> updateEmail(String email, {required String redirectUrl}) async {}
+  Future<void> updateEmail({
+    required String currentPassword,
+    required String newEmail,
+  }) async {
+    _throwIfFailing();
+    emailChanges.add((current: currentPassword, email: newEmail));
+    email = newEmail;
+    notifyListeners();
+  }
 
   @override
-  Future<void> updatePassword(String password) async {}
+  Future<void> updatePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    _throwIfFailing();
+    passwordChanges.add((current: currentPassword, next: newPassword));
+  }
+
+  void _throwIfFailing() {
+    if (error case final error?) throw error;
+  }
 }
