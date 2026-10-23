@@ -39,9 +39,16 @@ random_hex() {
   od -An -tx1 -N16 /dev/urandom | tr -d ' \n'
 }
 
-# 12 characters without look-alikes (no 0/o, 1/l/i).
+# 12 characters without look-alikes (no 0/o, 1/l/i). Reads a fixed number of
+# bytes: a pipeline from the endless /dev/urandom ends only through SIGPIPE,
+# which CI runners (and other launchers) start processes with ignored, and
+# then GNU fold reads forever (BSD tools print nothing instead).
 random_code() {
-  tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' </dev/urandom | fold -w 12 | head -n 1
+  code=
+  while [ ${#code} -lt 12 ]; do
+    code=$code$(head -c 256 /dev/urandom | tr -dc 'abcdefghjkmnpqrstuvwxyz23456789')
+  done
+  printf '%s\n' "$code" | cut -c1-12
 }
 
 # NAME's value as written in .env (the last such line), or nothing.

@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 from pathlib import Path
@@ -30,6 +31,10 @@ def layout(tmp_path: Path) -> Path:
     return root
 
 
+def _ignore_sigpipe() -> None:
+    signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+
+
 def _run(root: Path) -> subprocess.CompletedProcess[str]:
     # From another directory: the script finds the repo root by its own path.
     elsewhere = root.parent / "elsewhere"
@@ -37,16 +42,29 @@ def _run(root: Path) -> subprocess.CompletedProcess[str]:
     # A TMPDIR of its own: the script's temporary copy of .env must not stay.
     tmpdir = root.parent / "tmpdir"
     tmpdir.mkdir(exist_ok=True)
-    result = subprocess.run(
+    proc = subprocess.Popen(
         ["sh", str(root / "scripts" / "init-env.sh")],
         cwd=elsewhere,
         env={**os.environ, "TMPDIR": str(tmpdir)},
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
+        # As GitHub's runner starts it: SIGPIPE ignored. A pipeline that
+        # relies on SIGPIPE to stop reading /dev/urandom then runs forever
+        # (GNU) or yields nothing (BSD).
+        preexec_fn=_ignore_sigpipe,
+        # Its own process group, so a timeout ends the whole pipeline, not
+        # only sh (a left-over tr/fold would keep a CPU core busy).
+        start_new_session=True,
     )
+    try:
+        stdout, stderr = proc.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        pytest.fail("init-env.sh did not finish within 30 s")
     assert list(tmpdir.iterdir()) == []
-    return result
+    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
 
 def _set(env_file: Path, name: str, line: str) -> None:
