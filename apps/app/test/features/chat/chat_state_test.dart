@@ -387,7 +387,7 @@ void main() {
       service.failListMessages = true;
       final ok = await state.loadChat(5);
       expect(ok, isFalse);
-      expect(state.errorMessage, 'messages failed');
+      expect(state.errorMessage, ChatState.serverError);
     });
   });
 
@@ -472,7 +472,7 @@ void main() {
       await state.send('my dream');
       expect(state.messages.last.content, 'my dream');
       expect(state.failedMessageId, state.messages.last.id);
-      expect(state.errorMessage, 'boom');
+      expect(state.errorMessage, ChatState.serverError);
     });
 
     test('the daily limit sets retryAfterSeconds (not errorMessage)', () async {
@@ -645,7 +645,7 @@ void main() {
       expect(state.messages, hasLength(2));
       expect(state.messages.last.content, 'my dream');
       expect(state.failedMessageId, state.messages.last.id);
-      expect(state.errorMessage, 'upstream failed');
+      expect(state.errorMessage, ChatState.serverError);
       expect(state.sending, isFalse);
 
       service.scriptedStream = null;
@@ -951,7 +951,7 @@ void main() {
         service.failSetIntensity = true;
         await state.submitIntensity(7);
         expect(state.intensitySubmitted, isFalse);
-        expect(state.errorMessage, 'intensity failed');
+        expect(state.errorMessage, ChatState.serverError);
 
         // A later retry can still succeed.
         service.failSetIntensity = false;
@@ -1242,7 +1242,7 @@ void main() {
       await controller.close();
       await sendFuture;
 
-      expect(state.errorMessage, 'backend down');
+      expect(state.errorMessage, ChatState.serverError);
       expect(state.failedMessageId, isNull);
       expect(state.messages.any((m) => m.content == 'doomed'), isFalse);
     });
@@ -1380,7 +1380,7 @@ void main() {
       final transcript = await state.stopRecording();
 
       expect(transcript, isNull);
-      expect(state.errorMessage, 'transcribe failed');
+      expect(state.errorMessage, ChatState.serverError);
     });
 
     test('empty capture skips the transcription call', () async {

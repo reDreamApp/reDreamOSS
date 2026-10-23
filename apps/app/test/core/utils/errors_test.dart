@@ -45,6 +45,24 @@ void main() {
         );
       });
 
+      test("a server failure never shows the server's own words", () {
+        for (final code in [500, 502, 503, 504]) {
+          expect(
+            describeError(
+              ApiException(code, 'safety: crisis classifier not configured'),
+              l10n,
+            ),
+            l10n.errorServer,
+            reason: '$code',
+          );
+        }
+        // A client error's detail is the server telling people what to fix.
+        expect(
+          describeError(ApiException(409, 'chat is already finished'), l10n),
+          'chat is already finished',
+        );
+      });
+
       test('the wait is rounded up to whole minutes', () {
         String wait(int? seconds) => describeError(
           AuthFailure(

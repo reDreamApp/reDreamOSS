@@ -20,6 +20,10 @@ class ApiException implements Exception {
   bool get isVoiceUnavailable =>
       statusCode == 503 && message == 'voice_unavailable';
 
+  /// A failure on the server or at its AI provider. Its text is meant for
+  /// the operator's logs (it can name settings), not for people.
+  bool get isServerError => statusCode >= 500 && !isVoiceUnavailable;
+
   /// Health-data routes refuse until Art. 9 consent is granted.
   bool get isConsentRequired =>
       statusCode == 403 && message == 'consent_required';

@@ -13,6 +13,7 @@ String describeError(Object error, AppLocalizations l10n) => switch (error) {
   ApiException(isRateLimited: true) => l10n.errorRateLimited,
   // The 401 hook has already ended the session.
   ApiException(isUnauthorized: true) => l10n.authSessionExpired,
+  ApiException(isServerError: true) => l10n.errorServer,
   ApiException(:final message) when message.isNotEmpty => message,
   _ => l10n.errorUnknown,
 };

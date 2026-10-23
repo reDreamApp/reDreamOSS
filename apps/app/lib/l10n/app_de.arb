@@ -17,6 +17,7 @@
   "errorOffline": "Keine Internetverbindung. Bitte überprüfe dein Netzwerk und versuche es erneut.",
   "errorUnknown": "Etwas ist schiefgelaufen. Bitte versuche es erneut.",
   "errorRateLimited": "Zu viele Anfragen. Bitte warte einen Moment und versuche es erneut.",
+  "errorServer": "Der Server konnte das gerade nicht erledigen. Bitte versuche es später erneut. Wenn das öfter passiert, sag der Person Bescheid, die den Server betreibt.",
   "errorLoadFailed": "Daten konnten nicht geladen werden. Zum Aktualisieren nach unten ziehen.",
   "dateToday": "Heute",
   "dateYesterday": "Gestern",

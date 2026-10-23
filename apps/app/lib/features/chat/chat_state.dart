@@ -24,6 +24,7 @@ class ChatState extends ChangeNotifier {
   static const noChat = 'no_chat';
   static const rateLimited = 'rate_limited';
   static const voiceUnavailable = 'voice_unavailable';
+  static const serverError = 'server_error';
 
   final IChatService _service;
 
@@ -540,12 +541,13 @@ class ChatState extends ChangeNotifier {
             removeDraft();
             _safetyEvent = safetyEvent;
             terminal = true;
-          case ErrorEvent(:final message):
+          case ErrorEvent():
             // The backend rolled back the user message — mark the bubble
-            // failed so the existing retry flow can resend it.
+            // failed so the existing retry flow can resend it. The frame's
+            // text is the server's exception, not for people.
             removeDraft();
             _failedMessageId = userMessage.id;
-            _errorMessage = message;
+            _errorMessage = serverError;
             terminal = true;
         }
         notifyListeners();
@@ -705,6 +707,8 @@ class ChatState extends ChangeNotifier {
       ? voiceUnavailable
       : e.isRateLimited
       ? rateLimited
+      : e.isServerError
+      ? serverError
       : e.message;
 
   /// The greeting of one chat. It follows the chat's id, so a reload shows

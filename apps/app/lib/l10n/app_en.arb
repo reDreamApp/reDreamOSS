@@ -17,6 +17,7 @@
   "errorOffline": "No internet connection. Please check your network and try again.",
   "errorUnknown": "Something went wrong. Please try again.",
   "errorRateLimited": "Too many requests. Please wait a moment and try again.",
+  "errorServer": "The server could not complete this right now. Please try again later. If it keeps happening, tell whoever runs the server.",
   "errorLoadFailed": "Trouble fetching data. Pull down to refresh.",
   "dateToday": "Today",
   "dateYesterday": "Yesterday",

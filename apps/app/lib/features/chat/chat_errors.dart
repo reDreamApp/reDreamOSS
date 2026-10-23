@@ -10,5 +10,6 @@ String chatErrorText(String message, AppLocalizations l10n) =>
       ChatState.noChat => l10n.chatStartErrorBody,
       ChatState.rateLimited => l10n.errorRateLimited,
       ChatState.voiceUnavailable => l10n.voiceUnavailable,
+      ChatState.serverError => l10n.errorServer,
       _ => message,
     };
