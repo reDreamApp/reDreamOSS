@@ -15,6 +15,8 @@ Contract reference:
 - transcribe        : audio bytes → transcript (ADR 0010)
 - rehearsal_generate: dream → audio_key (the MP3 under AUDIO_DIR) + script +
                       duration
+- llm_configured    : whether the chat endpoint and models are set (LLM_REQUIRED);
+                      reported by /instance and /health; chat turns fail while off
 - stt_enabled / tts_enabled: whether each half of speech is configured; the
                       routes answer 503 voice_unavailable while it is off,
                       and the client never calls STT/TTS then
@@ -78,6 +80,8 @@ class BaseAiClient(Protocol):
     async def language_check(self, message: str, language: str) -> str: ...
     async def transcribe(self, *, file_name: str, audio_bytes: bytes) -> dict[str, Any]: ...
     async def rehearsal_generate(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+    @property
+    def llm_configured(self) -> bool: ...
     @property
     def stt_enabled(self) -> bool: ...
     @property
@@ -173,6 +177,12 @@ class InProcessAiClient:
                 "speech output off — set %s; rehearsal answers 503",
                 TTS_REQUIRED,
             )
+
+    @property
+    def llm_configured(self) -> bool:
+        from redream_ai.config import settings
+
+        return settings.llm_configured
 
     @property
     def stt_enabled(self) -> bool:

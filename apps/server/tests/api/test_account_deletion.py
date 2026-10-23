@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from redream_ai.audio import store
+from redream_api.core import consent
 from redream_api.core.config import settings
 from redream_api.db.base import Base
 from redream_api.db.models.auth_token import AuthToken
@@ -37,7 +38,7 @@ async def _account(client, email: str) -> tuple[UUID, dict[str, str]]:
     assert r.status_code == 201, r.text
     user_id = UUID(r.json()["user"]["id"])
     headers = {"Authorization": f"Bearer {r.json()['token']}"}
-    version = settings.consent_version
+    version = consent.CONSENT_VERSION
     r = await client.post(
         "/api/v1/users/me/consent",
         json={"version": version, "text_version": version},

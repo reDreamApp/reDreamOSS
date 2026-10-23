@@ -13,7 +13,7 @@ from ..db.models.user import User
 from ..db.repositories.auth_token_repo import AuthTokenRepo, hash_token
 from ..db.repositories.consent_repo import ConsentRepo
 from ..db.session import async_session_maker
-from .config import settings
+from . import consent
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -77,5 +77,5 @@ async def require_consent(
     screen.
     """
     latest = await ConsentRepo(db).latest(user.id)
-    if latest is None or not latest.granted or latest.version != settings.consent_version:
+    if latest is None or not latest.granted or latest.version != consent.CONSENT_VERSION:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "consent_required")

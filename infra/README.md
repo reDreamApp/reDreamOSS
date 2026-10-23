@@ -196,9 +196,9 @@ The instance itself is protected against deletion; see
 ## Updating the app and backend
 
 Publish matching mobile and backend releases when the consent text changes.
-The app sends its bundled `text_version`; the backend requires it to match
-`CONSENT_VERSION`. Update both that setting and Flutter's `consentTextVersion`
-when changing the consent copy.
+The app sends its bundled `text_version`; the backend requires it to match the
+code constant `redream_api.core.consent.CONSENT_VERSION`. Bump it together with
+Flutter's `consentTextVersion` and deploy the backend first (RELEASING.md).
 
 Apply database migrations before starting updated containers. The deployment
 workflow handles this ordering and runs

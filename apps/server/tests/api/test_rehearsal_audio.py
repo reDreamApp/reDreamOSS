@@ -19,8 +19,7 @@ import pytest
 from sqlalchemy import select
 
 from redream_ai.audio import store
-from redream_api.core import limits
-from redream_api.core.config import settings
+from redream_api.core import consent, limits
 from redream_api.db.models.dream import Dream
 from redream_api.db.repositories.user_repo import UserRepo
 from redream_api.services import audio_links
@@ -272,7 +271,7 @@ async def test_rehearsal_off_checks_consent_and_ownership_first(client, fake_ai,
     r = await client.post("/api/v1/dreams/999/rehearsal", json={"language": "en"})
     assert r.status_code == 404
 
-    monkeypatch.setattr(settings, "consent_version", "2099-01-01")
+    monkeypatch.setattr(consent, "CONSENT_VERSION", "2099-01-01")
     r = await client.post(f"/api/v1/dreams/{dream_id}/rehearsal", json={"language": "en"})
     assert r.status_code == 403
     assert r.json()["detail"] == "consent_required"

@@ -14,6 +14,12 @@ make api-dev               # from repo root: server on :8001 (uv run --env-file 
 
 Accounts: `REGISTRATION_MODE` is `invite` by default, and then `INVITE_CODE` (8 to 256 characters) is required or the server does not start; `open` and `closed` are the alternatives. The operator CLI creates users and resets passwords in every mode: `uv run python -m redream_api.cli create-user EMAIL` / `set-password EMAIL` (the password is asked for, or read from stdin with `--password-stdin`). `DAILY_AI_REQUESTS_PER_USER` (default 100, 0 = off) caps chat turns, transcriptions and rehearsal renderings per user per UTC day, in memory.
 
+`GET /api/v1/instance` (no login) tells the app what this server is: `INSTANCE_NAME`, the operator (`OPERATOR_NAME`, `OPERATOR_CONTACT`, `PRIVACY_URL`, all optional), the API and consent versions, registration mode, daily cap and which features are configured (chat, transcription, rehearsal audio).
+
+`GET /api/v1/health` answers 200 `{"status": "ok"}` whenever the process is up, with `llm_ready` (the four `LLM_*` settings are set) and `safety_classifier_enabled`.
+
+The consent-text version is a code constant (`redream_api.core.consent.CONSENT_VERSION`), not a setting: it must equal the app's `consentTextVersion`.
+
 `HELPLINE_TEXT_EN` / `HELPLINE_TEXT_DE` (the message the app shows when the crisis check flags a message) and `HELPLINE_PROMPT_EN` / `HELPLINE_PROMPT_DE` (the short help reference the chat model names on real distress) are optional; blank keeps a neutral default without country-specific numbers (limits and a German example in `.env.example`).
 
 A chat can switch between English and German mid-chat: before the crisis check, each message passes a cheap word check and, if it looks like (or asks for) the other language, one short `LLM_SMALL_MODEL` call; on a switch the chat continues in that language (crisis check, helpline text and reply included). Any failure keeps the language. A dream keeps the chat's language at the summary, and its rehearsal audio uses it.

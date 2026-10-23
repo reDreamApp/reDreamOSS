@@ -23,6 +23,16 @@ Decided 2026-07-02. Two long-lived branches, one release gate:
    `git push origin main:production`
    → migrations apply to the self-hosted DB, then containers rebuild.
 
+## Consent-text change
+
+The consent version is a code constant on each side:
+`redream_api.core.consent.CONSENT_VERSION` (server) and `consentTextVersion`
+in `apps/app/lib/features/consent/consent_service.dart` (app); a test keeps
+them equal. Bump both together, and only on a material change to the consent
+copy (a new processor or purpose): every user then consents again. **Deploy
+the server before the app**: an old server refuses grants from an app that
+sends the new version.
+
 ## One-time setup
 
 - The box: `infra/bootstrap.sh` installs the Supabase CLI and writes

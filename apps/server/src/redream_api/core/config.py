@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +35,15 @@ _HELPLINE_TEXT_DEFAULTS = {
     "helpline_text_en": HELPLINE_TEXT_EN_DEFAULT,
     "helpline_text_de": HELPLINE_TEXT_DE_DEFAULT,
 }
+# The instance block (GET /api/v1/instance): at most this many characters each.
+_INSTANCE_TEXT_MAX_LEN = {
+    "instance_name": 80,
+    "operator_name": 120,
+    "operator_contact": 200,
+    "privacy_url": 500,
+}
+# PRIVACY_URL may use http:// only on these hosts (local testing).
+_PRIVACY_URL_HTTP_HOSTS = ("localhost", "127.0.0.1")
 
 
 class Settings(BaseSettings):
@@ -56,10 +66,14 @@ class Settings(BaseSettings):
     # Lifetime of the signed rehearsal-audio link (services/audio_links).
     rehearsal_url_ttl_seconds: int = Field(default=300, ge=60, le=3600)
 
-    # Art. 9 consent — the consent-text version users must have granted.
-    # Bump ONLY on material changes to the consent copy (new processor, new
-    # purpose): a bump forces every user through re-consent on next launch.
-    consent_version: str = "2026-10-07"
+    # Instance, shown in the app when people connect (GET /api/v1/instance).
+    # Optional; blank = unset (None). OPERATOR_CONTACT is free text (an email
+    # or a URL); PRIVACY_URL an absolute https:// URL (http:// only on
+    # localhost / 127.0.0.1). Too long or a bad PRIVACY_URL, and startup fails.
+    instance_name: str | None = None
+    operator_name: str | None = None
+    operator_contact: str | None = None
+    privacy_url: str | None = None
 
     # AI (in-process, redream_ai)
     # DEV-ONLY escape hatch for the crisis pre-classifier (ADR 0005). Set
@@ -91,7 +105,9 @@ class Settings(BaseSettings):
     def _must_be_async_driver(cls, v: str) -> str:
         if not v.startswith(_ASYNC_DRIVERS):
             raise ValueError(
-                f"DATABASE_URL must use an async driver (one of {_ASYNC_DRIVERS}), got: {v[:40]}…"
+                # Only the scheme: the rest of the URL may hold the password.
+                f"DATABASE_URL must use an async driver (one of {_ASYNC_DRIVERS}), "
+                f"got: {urlsplit(v).scheme or '(no scheme)'}://…"
             )
         return v
 
@@ -109,6 +125,29 @@ class Settings(BaseSettings):
             name = field.upper()
             raise ValueError(
                 f"{name} is {len(text)} characters; at most {HELPLINE_TEXT_MAX_LEN} are allowed"
+            )
+        return text
+
+    @field_validator(
+        "instance_name", "operator_name", "operator_contact", "privacy_url", mode="before"
+    )
+    @classmethod
+    def _instance_text(cls, v: object, info: ValidationInfo) -> object:
+        if not isinstance(v, str):
+            return v
+        field = info.field_name or ""
+        text = v.strip()
+        if not text:
+            # INSTANCE_NAME= left blank in .env means unset, not "".
+            return None
+        name = field.upper()
+        max_len = _INSTANCE_TEXT_MAX_LEN[field]
+        if len(text) > max_len:
+            raise ValueError(f"{name} is {len(text)} characters; at most {max_len} are allowed")
+        if field == "privacy_url" and not _is_privacy_url(text):
+            raise ValueError(
+                f"{name} must be an absolute https:// URL with a host "
+                f"(http:// only on {' or '.join(_PRIVACY_URL_HTTP_HOSTS)})"
             )
         return text
 
@@ -141,6 +180,26 @@ class Settings(BaseSettings):
     def helpline_text_for(self, language: str) -> str:
         """The helpline text for a chat in `language`: German for "de", else English."""
         return self.helpline_text_de if language == "de" else self.helpline_text_en
+
+
+def _is_privacy_url(url: str) -> bool:
+    """True for an absolute https:// URL with a host, or http:// on localhost."""
+    # isprintable() rejects control, format and non-breaking-space characters.
+    # A backslash or userinfo makes parsers disagree on the host (browsers
+    # read "\" as "/"), so the host checked here could differ from the one opened.
+    if not url.isprintable() or " " in url or "\\" in url:
+        return False
+    try:
+        parts = urlsplit(url)
+        _ = parts.port  # a malformed port raises ValueError
+    except ValueError:
+        return False
+    if "@" in parts.netloc:
+        return False
+    host = parts.hostname or ""  # lower-cased by urlsplit, as is the scheme
+    if parts.scheme == "http":
+        return host in _PRIVACY_URL_HTTP_HOSTS
+    return parts.scheme == "https" and bool(host)
 
 
 settings = Settings()

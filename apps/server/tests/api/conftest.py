@@ -52,6 +52,10 @@ os.environ["HELPLINE_TEXT_EN"] = ""
 os.environ["HELPLINE_TEXT_DE"] = ""
 os.environ["HELPLINE_PROMPT_EN"] = ""
 os.environ["HELPLINE_PROMPT_DE"] = ""
+# A local .env may name its instance and operator; tests start unset (blank = None).
+os.environ.update(
+    dict.fromkeys(("INSTANCE_NAME", "OPERATOR_NAME", "OPERATOR_CONTACT", "PRIVACY_URL"), "")
+)
 # Registration as shipped (invite); a local .env may choose another mode.
 os.environ["REGISTRATION_MODE"] = "invite"
 os.environ["INVITE_CODE"] = "test-invite-code"
@@ -62,9 +66,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from redream_api.core import limits
-from redream_api.core.config import settings
-from redream_api.core.dependencies import get_current_user, get_db
+from redream_api.core import consent, limits
+from redream_api.core.dependencies import get_current_user, get_db, require_consent
 from redream_api.db import models as _models  # noqa: F401 — register tables
 from redream_api.db.base import Base
 from redream_api.db.models.user import User
@@ -93,9 +96,9 @@ class FakeAiClient:
     for `language_check` the chat's current language (no switch) — the common
     cases, which keep tests focused on the interesting paths.
 
-    Speech is off (`stt_enabled` / `tts_enabled` False), as with no STT_MODEL /
-    TTS_MODEL: the audio routes answer 503. The `voice_on` fixture switches
-    both halves on.
+    The chat LLM is configured (`llm_configured` True). Speech is off
+    (`stt_enabled` / `tts_enabled` False), as with no STT_MODEL / TTS_MODEL:
+    the audio routes answer 503. The `voice_on` fixture switches both halves on.
     """
 
     def __init__(self) -> None:
@@ -106,6 +109,7 @@ class FakeAiClient:
         self._transcribe: list[dict[str, Any]] = []
         self._rehearsal: list[dict[str, Any]] = []
         self.calls: list[dict[str, Any]] = []
+        self.llm_configured = True
         self.stt_enabled = False
         self.tts_enabled = False
 
@@ -262,7 +266,7 @@ async def fake_user(db_session_maker) -> User:
         session.add(
             UserConsent(
                 user_id=user.id,
-                version=settings.consent_version,
+                version=consent.CONSENT_VERSION,
                 granted=True,
             )
         )
@@ -345,6 +349,29 @@ async def auth_client(db_session_maker, fake_ai) -> AsyncIterator[AsyncClient]:
             yield session
 
     app.dependency_overrides[get_db] = _db_dep
+    app.dependency_overrides[get_ai_client] = lambda: fake_ai
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def public_client(fake_ai) -> AsyncIterator[AsyncClient]:
+    """HTTP client for the public routes (/health, /instance): fake AI, no
+    user, no database — a route that reaches get_db, get_current_user or
+    require_consent fails the test."""
+
+    def _forbidden(what: str):
+        def _dep() -> None:
+            raise AssertionError(f"this route must not use {what}")
+
+        return _dep
+
+    app.dependency_overrides[get_db] = _forbidden("the database")
+    app.dependency_overrides[get_current_user] = _forbidden("a signed-in user")
+    app.dependency_overrides[require_consent] = _forbidden("the consent gate")
     app.dependency_overrides[get_ai_client] = lambda: fake_ai
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:

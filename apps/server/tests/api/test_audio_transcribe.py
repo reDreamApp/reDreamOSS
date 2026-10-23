@@ -5,7 +5,7 @@ The FakeAiClient has speech off; `voice_on` switches it on.
 
 from __future__ import annotations
 
-from redream_api.core.config import settings
+from redream_api.core import consent
 from redream_api.services.ai_client import AIServiceError
 
 from .conftest import FakeAiClient
@@ -85,7 +85,7 @@ async def test_transcribe_off_still_checks_consent_first(
     client, fake_ai: FakeAiClient, monkeypatch
 ):
     """A user without current consent gets 403, whether speech is on or off."""
-    monkeypatch.setattr(settings, "consent_version", "2099-01-01")
+    monkeypatch.setattr(consent, "CONSENT_VERSION", "2099-01-01")
 
     for enabled in (False, True):
         fake_ai.stt_enabled = enabled

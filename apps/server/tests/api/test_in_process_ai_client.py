@@ -370,6 +370,16 @@ def test_speech_switches_follow_the_settings(ai, ai_client, monkeypatch):
     assert not ai_client.tts_enabled
 
 
+@pytest.mark.parametrize("unset", ["llm_base_url", "llm_api_key", "llm_model", "llm_small_model"])
+def test_llm_configured_follows_the_settings(ai, ai_client, monkeypatch, unset):
+    """What /instance (features.chat) and /health (llm_ready) report."""
+    from redream_ai.config import settings
+
+    assert ai_client.llm_configured
+    monkeypatch.setattr(settings, unset, "")
+    assert not ai_client.llm_configured
+
+
 @pytest.mark.parametrize(
     ("method", "setting", "reason"),
     [

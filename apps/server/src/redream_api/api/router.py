@@ -11,6 +11,7 @@ from .v1 import (
     dreams,
     exports,
     health,
+    instance,
     profile,
     progress,
     users,
@@ -18,6 +19,7 @@ from .v1 import (
 
 router_v1 = APIRouter()
 router_v1.include_router(health.router)
+router_v1.include_router(instance.router)
 router_v1.include_router(auth.router)
 router_v1.include_router(users.router)
 router_v1.include_router(profile.router)

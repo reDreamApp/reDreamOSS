@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ....core.config import settings
+from ....core import consent
 from ....core.dependencies import get_current_user, get_db
 from ....db.models.user import User
 from ....db.repositories.consent_repo import ConsentRepo
@@ -52,9 +52,9 @@ async def get_consent(
     latest = await ConsentRepo(db).latest(user.id)
     granted_version = latest.version if latest is not None and latest.granted else None
     return ConsentStatusOut(
-        required_version=settings.consent_version,
+        required_version=consent.CONSENT_VERSION,
         granted_version=granted_version,
-        consent_required=granted_version != settings.consent_version,
+        consent_required=granted_version != consent.CONSENT_VERSION,
     )
 
 
@@ -69,7 +69,7 @@ async def grant_consent(
         # Builds from before 2026-10-07 send no text_version. They reload the
         # form silently on a 409 but show any other error's detail under it.
         raise HTTPException(status.HTTP_426_UPGRADE_REQUIRED, _UPDATE_APP_MESSAGE)
-    if body.version != settings.consent_version or body.text_version != settings.consent_version:
+    if body.version != consent.CONSENT_VERSION or body.text_version != consent.CONSENT_VERSION:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "consent text changed — update the app and reload the consent screen",
@@ -85,7 +85,7 @@ async def withdraw_consent(
     """Withdrawal — as easy as granting (Art. 7(3)). Data stays until the
     user deletes it; health-data features gate until re-consent."""
     await ConsentRepo(db).record(
-        user.id, version=settings.consent_version, granted=False
+        user.id, version=consent.CONSENT_VERSION, granted=False
     )
 
 
