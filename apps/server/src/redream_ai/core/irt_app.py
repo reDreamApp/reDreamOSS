@@ -266,7 +266,10 @@ async def determine_stage_async(user_input: str, conversation: Conversation) -> 
     
     stage_response, usage, _ = await routing_agent.generate(prompt)  # Unpack content, usage, and logprobs
     stage_str = stage_response.strip()
-    logger.info(f"Stage output: {stage_str}")
+    logger.info(
+        "Stage output: %s",
+        stage_str if stage_str in {s.value for s in Stage} else f"({len(stage_str)} chars)",
+    )
     
     try:
         stage = Stage(stage_str)
@@ -277,7 +280,7 @@ async def determine_stage_async(user_input: str, conversation: Conversation) -> 
             stage = Stage(conversation.stages[-1])
         else:
             stage = Stage.RECORDING
-        logger.warning(f"Invalid stage '{stage_str}', defaulting to {stage.value}")
+        logger.warning(f"Invalid stage ({len(stage_str)} chars), defaulting to {stage.value}")
 
     # APP BUILD: 'rehearsal' is not part of the routed chat flow (it happens later
     # in the dream journal, not in chat). If the router ever emits it — the response

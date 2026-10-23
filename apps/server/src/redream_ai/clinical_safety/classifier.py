@@ -298,7 +298,7 @@ Classify the rewriting attempt. If user claims to feel nothing about distressing
             
             if node_id is None:
                 # Code not in map - try fuzzy matching
-                logger.warning(f"Unknown code '{code}' from response '{raw_response}'. Attempting fuzzy match...")
+                logger.warning(f"Unknown code from the classifier ({len(code)} chars). Attempting fuzzy match...")
                 try:
                     node_id = self._fuzzy_match_node_id(code)
                     # Fuzzy match succeeded but confidence is 0
@@ -308,13 +308,13 @@ Classify the rewriting attempt. If user claims to feel nothing about distressing
                     # Complete failure - route to UNCLASSIFIED with 0 confidence
                     # This lets the critic handle it safely (seek clarification)
                     # instead of silently labeling it as adaptive
-                    logger.error(f"Fuzzy match failed for '{code}'. Routing to UNCLASSIFIED.")
+                    logger.error("Fuzzy match failed. Routing to UNCLASSIFIED.")
                     node_id = "UNCLASSIFIED"
                     code = "UNCLASSIFIED"
                     confidence = 0.0
             
             conf_str = f"{confidence:.3f}" if confidence is not None else "n/a"
-            logger.info(f"Classification: '{user_text[:50]}...' -> {code} ({node_id}) [confidence: {conf_str}, margin: {margin}]")
+            logger.info(f"Classification: {code} ({node_id}) [confidence: {conf_str}, margin: {margin}]")
 
             # Build result with all fields
             result = ClassificationResult(
@@ -404,7 +404,7 @@ Classify the rewriting attempt. If user claims to feel nothing about distressing
         # Try simple substring matching against node IDs
         for valid_id in self.valid_node_ids:
             if invalid_code in valid_id or valid_id in invalid_code:
-                logger.info(f"Fuzzy matched '{invalid_code}' to '{valid_id}'")
+                logger.info(f"Fuzzy matched an unknown code to '{valid_id}'")
                 return valid_id
         
         # Extended keyword map for fuzzy matching
@@ -493,7 +493,7 @@ Classify the rewriting attempt. If user claims to feel nothing about distressing
         
         for keyword, valid_id in keyword_map.items():
             if keyword in invalid_code:
-                logger.info(f"Keyword matched '{invalid_code}' to '{valid_id}'")
+                logger.info(f"Keyword matched an unknown code to '{valid_id}'")
                 return valid_id
         
         # If no match found, raise an error

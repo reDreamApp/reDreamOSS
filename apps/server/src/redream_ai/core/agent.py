@@ -12,14 +12,14 @@ from .prompts import ROUTING_PROMPT
 prompt_logger = logging.getLogger("prompts")
 logger = logging.getLogger(__name__)
 
-# Add a method to log prompts
 def log_prompt(system_prompt: str, user_prompt: str, model: str):
-    prompt_logger.info(
-        "\n=== API REQUEST ===\n"
-        f"Model: {model}\n"
-        f"System Prompt: {system_prompt}\n"
-        f"User Prompt: {user_prompt}\n"
-        "=================="
+    """Sizes only: the prompts carry the chat (health data), which never goes
+    to the logs, not even at DEBUG."""
+    prompt_logger.debug(
+        "llm.request model=%s system_chars=%d user_chars=%d",
+        model,
+        len(system_prompt or ""),
+        len(user_prompt or ""),
     )
 
 def build_client() -> AsyncOpenAI:

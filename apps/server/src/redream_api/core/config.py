@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
@@ -200,6 +201,29 @@ def _is_privacy_url(url: str) -> bool:
     if parts.scheme == "http":
         return host in _PRIVACY_URL_HTTP_HOSTS
     return parts.scheme == "https" and bool(host)
+
+
+# Setting prefixes of reDreamAI's hosted setup (ADR 0013). reDreamOSS reads
+# none of them, so a .env carried over from there starts without a provider.
+_LEGACY_PREFIXES = (
+    "GROQ_",
+    "LANGFUSE_",
+    "MISTRAL_",
+    "OPENROUTER_",
+    "SCALEWAY_",
+    "SUPABASE_",
+    "VOXTRAL_",
+    "WHISPER_",
+)
+
+
+def legacy_setting_names(environ: Mapping[str, str]) -> list[str]:
+    """The names (never the values) of reDreamAI settings that are set."""
+    return sorted(
+        name
+        for name, value in environ.items()
+        if value and name.upper().startswith(_LEGACY_PREFIXES)
+    )
 
 
 settings = Settings()

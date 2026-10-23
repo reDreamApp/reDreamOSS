@@ -6,6 +6,8 @@ Run with:
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -16,15 +18,25 @@ from fastapi.responses import JSONResponse
 
 from .api.router import router_v1
 from .core import passwords
+from .core.config import legacy_setting_names
 from .core.logging import configure_logging
 from .core.request_limits import RequestSizeLimitMiddleware
 from .services.ai_client import get_ai_client
 
 configure_logging()
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # A .env carried over from reDreamAI: say why no provider is configured.
+    legacy = legacy_setting_names(os.environ)
+    if legacy:
+        log.warning(
+            "ignored reDreamAI settings: %s — reDreamOSS reads LLM_*, STT_* and TTS_* "
+            "instead (see .env.example)",
+            ", ".join(legacy),
+        )
     # The AI side runs in-process: build its client (IRT agents, SafetyCritic,
     # crisis-classifier clients) at startup, not on the first chat turn, and
     # log what is ready.

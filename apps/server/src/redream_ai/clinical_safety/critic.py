@@ -312,7 +312,7 @@ class SafetyCritic:
                     context=seg.get("context")  # Extract context for NLI
                 ))
             
-            logger.info(f"Segmented input into {len(segments)} parts: {[(s.segment_type, s.context) for s in segments]}")
+            logger.info(f"Segmented input into {len(segments)} parts: {[s.segment_type for s in segments]}")
             return segments
             
         except (json.JSONDecodeError, KeyError) as e:
@@ -343,7 +343,7 @@ class SafetyCritic:
             SafetyResult with verdict and any constraints
         """
         context_info = f" (with nightmare context)" if nightmare_context else ""
-        logger.info(f"Evaluating intervention{context_info}: '{user_input[:50]}...'")
+        logger.info(f"Evaluating intervention{context_info} ({len(user_input)} chars)")
         
         try:
             # Step 1: Segment the input (pass nightmare context for context extraction)
@@ -477,8 +477,8 @@ IMPORTANT:
                 # Raise the threshold based on benchmark experiments later
                 if segment.confidence is not None and segment.confidence <= CONFIDENCE_THRESHOLD:
                     logger.warning(
-                        f"Low confidence ({segment.confidence:.3f}) for segment "
-                        f"'{segment.text[:30]}...' — rerouting to UNCLASSIFIED"
+                        f"Low confidence ({segment.confidence:.3f}) for a "
+                        f"{segment.segment_type} segment — rerouting to UNCLASSIFIED"
                     )
                     segment.node_id = "UNCLASSIFIED"
                     segment.node_type = "unclassified"
