@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/platform/platform_features.dart';
 import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/storage/local_store.dart';
 import 'package:redream_app/features/journal/dream.dart';
@@ -210,6 +211,24 @@ void main() {
       final requests = await open(tester, dreamJson(1, language: 'de'));
       expect(requests, [
         {'language': 'de'},
+      ]);
+    });
+
+    testWidgets('the web app streams its audio without touching files', (
+      tester,
+    ) async {
+      // No file system in a browser: path_provider must not be asked at all.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async {
+            fail('path_provider called on the web: ${call.method}');
+          });
+      PlatformFeatures.debugIsWeb = true;
+      addTearDown(() => PlatformFeatures.debugIsWeb = null);
+
+      final requests = await open(tester, dreamJson(1, language: 'en'));
+
+      expect(requests, [
+        {'language': 'en'},
       ]);
     });
 

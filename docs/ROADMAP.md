@@ -10,6 +10,7 @@ What reDreamOSS does not do yet, roughly in order of how much it matters to an o
 - **No moderation channel.** There is no in-app report button; people reach the operator through `OPERATOR_CONTACT`.
 - **No request-flood protection at the edge.** The server limits sign-in, sign-up and AI requests; Caddy as configured adds nothing on top. Behind a tunnel or CDN, use its rate limiting.
 - **Long dreams and OpenAI speech.** OpenAI's TTS takes at most 4096 characters per request; a longer rewritten dream fails to render there. Splitting at sentence boundaries and joining the MP3s would lift it.
+- **Personal mode is for this computer only.** `make start` answers the browser on the same machine; a phone needs the server + APK path. A desktop wrapper (or a phone-friendly LAN mode with its own sign-in) would close that gap.
 - **iOS.** The app builds for iOS, but there is no release pipeline (TestFlight) and no automated iOS check; App Transport Security can block streaming rehearsal audio from a plain-http development server.
 
 ## Possible next steps

@@ -26,6 +26,8 @@ dependencies:
   shared_preferences: ^2.5.3
   timezone: ^0.10.1
   url_launcher: ^6.3.2
+  # Browser APIs for the web app (recording blobs, export downloads).
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_launcher_icons: ^0.14.4

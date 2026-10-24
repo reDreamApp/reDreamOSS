@@ -13,6 +13,7 @@ class AppSettings extends ChangeNotifier {
   static const _themeKey = 'theme_mode';
   static const _languageKey = 'selected_language';
   static const _onboardingKey = 'pending_onboarding_user';
+  static const _personalUserKey = 'personal_user';
 
   static const supportedLanguages = ['en', 'de'];
 
@@ -52,6 +53,15 @@ class AppSettings extends ChangeNotifier {
   Future<void> markOnboardingPending(String userId) async {
     await _store.setString(_onboardingKey, userId);
     notifyListeners();
+  }
+
+  /// True when [userId] is a personal server's user this app has not seen
+  /// yet (the first start, or after the account was deleted): like a
+  /// sign-up, it begins with onboarding.
+  Future<bool> notePersonalUser(String userId) async {
+    if (_store.getString(_personalUserKey) == userId) return false;
+    await _store.setString(_personalUserKey, userId);
+    return true;
   }
 
   Future<void> completeOnboarding() async {

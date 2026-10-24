@@ -6,6 +6,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/api/api_exception.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/platform/platform_features.dart';
 import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/storage/secure_audio_cache.dart';
 import 'package:redream_app/core/utils/errors.dart';
@@ -65,6 +66,13 @@ class _PracticeAudioScreenState extends State<PracticeAudioScreen> {
       (_dream.rehearsalLanguage == null ||
           _dream.rehearsalLanguage == _language);
 
+  /// The saved copy, null where there are none (the web app).
+  Future<File?> _savedCopy() async {
+    if (!PlatformFeatures.offlineAudio) return null;
+    final file = await _cacheFile();
+    return file.existsSync() ? file : null;
+  }
+
   Future<File> _cacheFile() async {
     final owner = context.read<AuthService>().userId;
     if (owner == null) throw StateError('Sign-in required');
@@ -100,8 +108,7 @@ class _PracticeAudioScreenState extends State<PracticeAudioScreen> {
       if (_dream.isLocal) throw _UserError(l10n.audioSyncFirst);
       if (!_dream.hasRewrite) throw _UserError(l10n.audioNoRewritten);
 
-      final cached = await _cacheFile();
-      if (cached.existsSync()) {
+      if (await _savedCopy() case final cached?) {
         await _playCached(cached);
         return;
       }
@@ -135,8 +142,7 @@ class _PracticeAudioScreenState extends State<PracticeAudioScreen> {
       }
       final url = _dream.rehearsalAudioUrl ?? '';
       if (url.isEmpty) throw _UserError(l10n.audioUnavailable);
-      final recheck = await _cacheFile();
-      if (recheck.existsSync()) {
+      if (await _savedCopy() case final recheck?) {
         await _playCached(recheck);
       } else {
         await _player.setUrl(journal.rehearsalUri(url).toString());
@@ -283,14 +289,16 @@ class _PracticeAudioScreenState extends State<PracticeAudioScreen> {
                             ),
                           ],
                           const SizedBox(height: 20),
-                          AppButton(
-                            label: l10n.audioSaveOffline,
-                            icon: Icons.download_outlined,
-                            style: AppButtonStyle.outlined,
-                            busy: _downloading,
-                            onPressed: _download,
-                          ),
-                          const SizedBox(height: 10),
+                          if (PlatformFeatures.offlineAudio) ...[
+                            AppButton(
+                              label: l10n.audioSaveOffline,
+                              icon: Icons.download_outlined,
+                              style: AppButtonStyle.outlined,
+                              busy: _downloading,
+                              onPressed: _download,
+                            ),
+                            const SizedBox(height: 10),
+                          ],
                           AppButton(
                             label: l10n.done,
                             busy: _saving,

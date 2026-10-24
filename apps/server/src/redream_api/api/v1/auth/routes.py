@@ -4,7 +4,8 @@ The server keeps its own accounts: argon2id password hashes (core/passwords)
 and opaque bearer tokens stored as their sha256 (auth_token_repo), valid
 30 days after their last use. REGISTRATION_MODE decides who may register;
 the operator's CLI (python -m redream_api.cli) creates users and resets
-passwords in every mode.
+passwords in every mode. In personal mode nobody registers: the one local
+user is signed in by POST /auth/personal, from this machine only.
 
 Rate limits (core/limits) are checked before any password is hashed.
 """
@@ -12,9 +13,12 @@ Rate limits (core/limits) are checked before any password is hashed.
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import logging
+import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....core import limits, passwords
@@ -22,6 +26,7 @@ from ....core.config import settings
 from ....core.dependencies import CurrentSession, get_current_session, get_current_user, get_db
 from ....db.models.user import User
 from ....db.repositories.auth_token_repo import AuthTokenRepo
+from ....db.repositories.user_repo import UserRepo
 from ....services import accounts
 from .schemas import (
     AuthOut,
@@ -38,13 +43,18 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 INVALID_LOGIN = "invalid email or password"
 WRONG_PASSWORD = "wrong password"
+# The personal user's login name; it has a random password nobody knows.
+PERSONAL_EMAIL = "personal@localhost"
+_LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "[::1]"}
+# Set by reverse proxies and tunnels, which reach the server from loopback too.
+_FORWARDING_HEADERS = ("forwarded", "x-forwarded-for", "x-real-ip", "cf-connecting-ip")
 
 
 @router.post("/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
 async def register(
     body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)
 ) -> AuthOut:
-    if settings.registration_mode == "closed":
+    if settings.registration_mode in ("closed", "personal"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "registration closed")
     ip = limits.client_ip(request)
     limits.register_attempts_by_ip.check(ip)
@@ -79,6 +89,42 @@ async def login(
         )
     limits.login_failures_by_email.forgive(limit_key, reserved)
     await AuthTokenRepo(db).delete_expired()
+    return await _session_for(db, user)
+
+
+@router.post("/personal", response_model=AuthOut)
+async def personal(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    personal_key: str | None = Header(default=None, alias="X-Personal-Key"),
+) -> AuthOut:
+    """Personal mode: a session for the one local user (created on first use).
+
+    Needs PERSONAL_KEY, which only the person who ran `make start` has (it
+    opens the browser with it), so a forwarder that adds no headers (ssh -R,
+    socat, a plain proxy_pass) or another account on this machine gets
+    nothing. Also only from this machine: a loopback client, a local Host (a
+    DNS-rebinding page has its own) and no forwarding headers."""
+    if settings.registration_mode != "personal":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    if not _from_this_machine(request):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "personal sign-in only on this machine")
+    if not personal_key:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "personal key required")
+    if not hmac.compare_digest(personal_key.encode(), settings.personal_key.encode()):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "wrong personal key")
+    repo = UserRepo(db)
+    user = await repo.get_by_email(PERSONAL_EMAIL)
+    if user is None:
+        password_hash = await passwords.hash_password(secrets.token_urlsafe(32))
+        try:
+            user = await repo.create(email=PERSONAL_EMAIL, password_hash=password_hash)
+            log.info("auth.personal user created user_id=%s", user.id)
+        except IntegrityError:
+            await db.rollback()  # a parallel first sign-in created it
+            user = await repo.get_by_email(PERSONAL_EMAIL)
+            if user is None:
+                raise
     return await _session_for(db, user)
 
 
@@ -120,6 +166,20 @@ async def change_email(
 async def validate_session(_: User = Depends(get_current_user)) -> None:
     """If the bearer token is live, return 204; otherwise the dep raises 401."""
     return None
+
+
+def _from_this_machine(request: Request) -> bool:
+    try:
+        client = ipaddress.ip_address(request.client.host if request.client else "")
+    except ValueError:
+        return False
+    if not client.is_loopback:
+        return False
+    if any(name in request.headers for name in _FORWARDING_HEADERS):
+        return False
+    host = request.headers.get("host", "").lower()
+    hostname = host.split("]")[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
+    return hostname in _LOCAL_HOSTNAMES
 
 
 def _invite_code_ok(code: str | None) -> bool:

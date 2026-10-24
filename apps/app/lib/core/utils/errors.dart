@@ -35,6 +35,7 @@ String _authMessage(AuthFailure failure, AppLocalizations l10n) =>
       },
       AuthFailureKind.invalidInput => l10n.authInvalidInput,
       AuthFailureKind.sessionExpired => l10n.authSessionExpired,
+      AuthFailureKind.personalKey => l10n.personalKeyNeeded,
       AuthFailureKind.other => l10n.errorUnknown,
     };
 

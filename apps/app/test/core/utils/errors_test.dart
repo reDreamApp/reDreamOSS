@@ -22,6 +22,7 @@ void main() {
           AuthFailureKind.tooManyAttempts: l10n.authTooManyAttempts,
           AuthFailureKind.invalidInput: l10n.authInvalidInput,
           AuthFailureKind.sessionExpired: l10n.authSessionExpired,
+          AuthFailureKind.personalKey: l10n.personalKeyNeeded,
           AuthFailureKind.other: l10n.errorUnknown,
         };
         expect(expected.keys, unorderedEquals(AuthFailureKind.values));

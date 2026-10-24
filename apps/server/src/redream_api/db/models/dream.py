@@ -9,7 +9,6 @@ from uuid import UUID
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
-    DateTime,
     ForeignKey,
     Integer,
     Text,
@@ -20,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..base import Base
+from ..types import UTCDateTime
 from ._types import JsonCol, PkBigInt
 
 
@@ -46,10 +46,10 @@ class Dream(Base):
         Boolean, nullable=False, default=False, server_default=false()
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+        UTCDateTime(), server_default=func.now(), nullable=False, index=True
     )
     last_edited: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        UTCDateTime(), server_default=func.now(), nullable=False
     )
     practice_timestamps: Mapped[list[Any]] = mapped_column(
         JsonCol, nullable=False, default=list, server_default=text("'[]'")
@@ -72,4 +72,4 @@ class Dream(Base):
     rehearsal_script: Mapped[str | None] = mapped_column(Text)
     rehearsal_duration: Mapped[str | None] = mapped_column(Text)
     rehearsal_language: Mapped[str | None] = mapped_column(Text)
-    rehearsal_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rehearsal_generated_at: Mapped[datetime | None] = mapped_column(UTCDateTime())

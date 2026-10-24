@@ -9,10 +9,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Text, func
+from sqlalchemy import Boolean, ForeignKey, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..base import Base
+from ..types import UTCDateTime
 from ._types import PkBigInt
 
 HEALTH_DATA_CONSENT_KEY = "health_data_processing"
@@ -34,5 +35,5 @@ class UserConsent(Base):
     version: Mapped[str] = mapped_column(Text, nullable=False)
     granted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime(), nullable=False, server_default=func.now()
     )

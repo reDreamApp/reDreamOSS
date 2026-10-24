@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:redream_app/app.dart';
 import 'package:redream_app/core/app_services.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/platform/platform_features.dart';
 import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/storage/local_store.dart';
@@ -59,6 +60,7 @@ Future<(Widget, FakeApi, AppSettings)> _app({
   IVoiceRecorder? recorder,
   bool connected = true,
   Map<String, Object?>? instance,
+  String? pageOrigin,
 }) async {
   var needsConsent = consentRequired;
   FlutterSecureStorage.setMockInitialValues({});
@@ -133,6 +135,7 @@ Future<(Widget, FakeApi, AppSettings)> _app({
     store,
     consentVersion: consentTextVersion,
     httpClient: api.httpClient(),
+    pageOrigin: pageOrigin,
   );
   if (connected) {
     await server.connect('http://fake');
@@ -632,6 +635,184 @@ void main() {
     await _settle(tester);
     expect(find.text('Forgot password?'), findsOneWidget);
     expect(api.calls, isEmpty);
+  });
+
+  group('a personal server (make start)', () {
+    testWidgets('signs in by itself, no sign-in screen', (tester) async {
+      final auth = FakeAuth();
+      final (app, _, _) = await _app(
+        auth: auth,
+        instance: instanceJson(registration: 'personal'),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      expect(auth.personalSignIns, 1);
+      expect(auth.signIns, isEmpty);
+      // A new local user starts like a sign-up: with onboarding.
+      expect(find.text(_en.skip), findsOneWidget);
+    });
+
+    testWidgets('the same local user again goes straight home', (
+      tester,
+    ) async {
+      final auth = FakeAuth();
+      final (app, _, _) = await _app(
+        auth: auth,
+        instance: instanceJson(registration: 'personal'),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+      await tester.tap(find.text(_en.skip));
+      await _settle(tester);
+      expect(find.text('Your Progress'), findsOneWidget);
+
+      // The session ends (an expired token): the app signs in again by itself.
+      await auth.signOut();
+      await _settle(tester);
+
+      expect(auth.personalSignIns, 2);
+      expect(find.text(_en.skip), findsNothing);
+      expect(find.text('Your Progress'), findsOneWidget);
+    });
+
+    testWidgets('says where it opens when it refuses, and tries again', (
+      tester,
+    ) async {
+      final auth = FakeAuth()..error = Exception('403');
+      final (app, _, _) = await _app(
+        auth: auth,
+        instance: instanceJson(registration: 'personal'),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      expect(find.text(_en.personalSignInFailed), findsOneWidget);
+      expect(find.byType(TextFormField), findsNothing);
+      auth.error = null;
+      await tester.tap(find.widgetWithText(FilledButton, _en.retry));
+      await _settle(tester);
+
+      expect(find.text(_en.skip), findsOneWidget);
+    });
+
+    testWidgets('without the key it points to the link from the terminal', (
+      tester,
+    ) async {
+      final auth = FakeAuth()
+        ..error = const AuthFailure(AuthFailureKind.personalKey);
+      final (app, _, _) = await _app(
+        auth: auth,
+        instance: instanceJson(registration: 'personal'),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      expect(find.text(_en.personalKeyNeeded), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, _en.retry), findsOneWidget);
+    });
+
+    testWidgets('settings have no account to change or sign out of', (
+      tester,
+    ) async {
+      final (app, _, _) = await _app(
+        auth: FakeAuth(userId: 'user-personal', email: 'personal@localhost'),
+        instance: instanceJson(registration: 'personal'),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await _settle(tester);
+
+      expect(find.text(_en.settingsEmail), findsNothing);
+      expect(find.text(_en.settingsPassword), findsNothing);
+      expect(find.text(_en.settingsSignOut), findsNothing);
+      expect(find.text(_en.settingsNightmareFrequency), findsOneWidget);
+      expect(find.text(_en.settingsExport), findsOneWidget);
+      expect(find.text(_en.settingsDeleteAccount), findsOneWidget);
+    });
+
+    testWidgets('consent offers no sign-out', (tester) async {
+      final (app, _, _) = await _app(
+        auth: FakeAuth(userId: 'user-personal'),
+        consentRequired: true,
+        instance: instanceJson(registration: 'personal'),
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      expect(find.text(_en.consentTitle), findsOneWidget);
+      expect(find.text(_en.consentDeclineHintPersonal), findsOneWidget);
+      expect(find.text(_en.consentSignOut), findsNothing);
+    });
+  });
+
+  group('the web app', () {
+    testWidgets('connects to the server it came from, with no change offered', (
+      tester,
+    ) async {
+      final (app, api, _) = await _app(
+        auth: FakeAuth(),
+        connected: false,
+        pageOrigin: 'http://fake',
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      expect(api.calls, contains('GET /api/v1/instance'));
+      expect(find.widgetWithText(FilledButton, 'Sign in'), findsOneWidget);
+      expect(find.text(_en.serverChange), findsNothing);
+    });
+
+    testWidgets('settings show the server but offer no change or reminder', (
+      tester,
+    ) async {
+      PlatformFeatures.debugIsWeb = true;
+      addTearDown(() => PlatformFeatures.debugIsWeb = null);
+      final (app, _, _) = await _app(
+        auth: FakeAuth(userId: 'user-1', email: 'me@example.com'),
+        pageOrigin: 'http://fake',
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await _settle(tester);
+      expect(find.text('http://fake'), findsOneWidget);
+      await tester.tap(find.text(_en.settingsServer));
+      await _settle(tester);
+
+      expect(find.text(_en.changeServerBody), findsNothing);
+      expect(find.text(_en.reminderTitle), findsNothing);
+      expect(find.text(_en.settingsSignOut), findsOneWidget);
+    });
+
+    testWidgets('the journal offers no reminder on the web', (tester) async {
+      PlatformFeatures.debugIsWeb = true;
+      addTearDown(() => PlatformFeatures.debugIsWeb = null);
+      final (app, _, _) = await _app(
+        auth: FakeAuth(userId: 'user-1', email: 'me@example.com'),
+        pageOrigin: 'http://fake',
+      );
+      _tallPhone(tester);
+      await tester.pumpWidget(app);
+      await _settle(tester);
+
+      await tester.tap(find.text(_en.navJournal));
+      await _settle(tester);
+
+      expect(find.text(_en.journalAddDream), findsOneWidget);
+      expect(find.text(_en.journalNotifications), findsNothing);
+    });
   });
 
   testWidgets('home shows progress from the API and tabs switch screens', (

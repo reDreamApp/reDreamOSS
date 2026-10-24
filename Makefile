@@ -11,6 +11,12 @@ help: ## show this help
 # local server targets when it exists; run from apps/server, hence ../../.
 ENV_FILE := $(if $(wildcard .env),--env-file ../../.env,)
 
+# ---- personal mode -------------------------------------------------------
+
+.PHONY: start
+start: ## run reDreamOSS on this computer for yourself: http://localhost:8000 (needs uv)
+	uv run --project apps/server python scripts/start.py
+
 # ---- server: ai side (apps/server, redream_ai) --------------------------
 
 .PHONY: ai-test ai-lint ai-fmt

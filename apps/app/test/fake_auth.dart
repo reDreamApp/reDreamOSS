@@ -41,6 +41,17 @@ class FakeAuth extends AuthService {
     notifyListeners();
   }
 
+  int personalSignIns = 0;
+
+  @override
+  Future<void> signInPersonal() async {
+    _throwIfFailing();
+    personalSignIns++;
+    userId = 'user-personal';
+    email = 'personal@localhost';
+    notifyListeners();
+  }
+
   /// Runs when signOut is called, before anything changes.
   void Function()? onSignOut;
 

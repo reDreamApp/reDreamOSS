@@ -1,13 +1,13 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/app_services.dart';
 import 'package:redream_app/core/widgets/app_button.dart';
 import 'package:redream_app/core/widgets/feedback.dart';
 import 'package:redream_app/features/settings/_form_page.dart';
+import 'package:redream_app/features/settings/export_file.dart'
+    if (dart.library.js_interop) 'package:redream_app/features/settings/export_file_web.dart';
 import 'package:redream_app/l10n/generated/app_localizations.dart';
 
 class ExportDataScreen extends StatefulWidget {
@@ -29,22 +29,21 @@ class _ExportDataScreenState extends State<ExportDataScreen> {
     });
     try {
       final data = await context.read<AppServices>().account.exportData();
-      final dir = await getApplicationDocumentsDirectory();
       final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
         ':',
         '-',
       );
-      final file = File('${dir.path}/redream_export_$stamp.json');
-      await file.writeAsString(
+      // A file in the app's documents; in a browser, a download.
+      final saved = await saveExport(
+        'redream_export_$stamp.json',
         const JsonEncoder.withIndent('  ').convert(data),
-        flush: true,
       );
       if (!mounted) return;
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: Text(l10n.exportReadyTitle),
-          content: Text(l10n.exportReadyBody(file.path)),
+          content: Text(l10n.exportReadyBody(saved)),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),

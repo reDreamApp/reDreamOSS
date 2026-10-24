@@ -3,8 +3,10 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
+import 'package:redream_app/features/auth/personal_sign_in_screen.dart';
 import 'package:redream_app/features/auth/sign_in_screen.dart';
 import 'package:redream_app/features/consent/consent_screen.dart';
 import 'package:redream_app/features/onboarding/onboarding_screen.dart';
@@ -53,14 +55,20 @@ class _ScrollBehavior extends MaterialScrollBehavior {
   ) => child;
 }
 
-/// Signed out → sign in. Signed in → per-user scope.
+/// Signed out → sign in (on a personal server by itself). Signed in →
+/// per-user scope.
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
   @override
   Widget build(BuildContext context) {
     final userId = context.watch<AuthService>().userId;
-    if (userId == null) return const SignInScreen();
+    if (userId == null) {
+      final personal = context.select<ServerConfig, bool>(
+        (s) => s.instance?.personal ?? false,
+      );
+      return personal ? const PersonalSignInScreen() : const SignInScreen();
+    }
     return UserScope(
       key: ValueKey(userId),
       userId: userId,

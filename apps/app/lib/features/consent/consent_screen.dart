@@ -93,9 +93,9 @@ class _ConsentScreenState extends State<ConsentScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final privacy = webUri(
-      context.watch<ServerConfig>().instance?.privacyUrl ?? '',
-    );
+    final instance = context.watch<ServerConfig>().instance;
+    final privacy = webUri(instance?.privacyUrl ?? '');
+    final personal = instance?.personal ?? false;
     final consent = context.watch<ConsentState>();
     final brand = BrandTheme.of(context);
     final notice = consent.hasCurrentText
@@ -188,14 +188,18 @@ class _ConsentScreenState extends State<ConsentScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    l10n.consentDeclineHint,
+                    personal
+                        ? l10n.consentDeclineHintPersonal
+                        : l10n.consentDeclineHint,
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: brand.muted),
                   ),
-                  TextButton(
-                    onPressed: () => context.read<AuthService>().signOut(),
-                    child: Text(l10n.consentSignOut),
-                  ),
+                  // One local user on a personal server: nothing to sign out of.
+                  if (!personal)
+                    TextButton(
+                      onPressed: () => context.read<AuthService>().signOut(),
+                      child: Text(l10n.consentSignOut),
+                    ),
                 ],
               ),
             ),

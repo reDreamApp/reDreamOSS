@@ -10,6 +10,7 @@ The binding architectural decisions of reDreamOSS. Each ADR uses a lightweight M
 - [0005 — Crisis detection before every guided turn](0005-crisis-detection.md)
 - [0009 — Streaming chat via SSE end-to-end](0009-streaming-chat.md)
 - [0013 — reDreamOSS: one self-hostable server, any provider](0013-origin-of-redreamoss.md)
+- [0014 — Personal mode: the same server for one person, on their computer](0014-personal-mode.md)
 
 ## Status conventions
 
@@ -19,5 +20,5 @@ The binding architectural decisions of reDreamOSS. Each ADR uses a lightweight M
 
 ## Workflow
 
-1. New decision: create `NNNN-short-slug.md` with the next free number (0014 onwards), status `proposed`, open a pull request.
+1. New decision: create `NNNN-short-slug.md` with the next free number (0015 onwards), status `proposed`, open a pull request.
 2. Revising an accepted decision: add a dated amendment, or write a new ADR that supersedes it and change the old one's status to `superseded by ADR-NNNN`. Keep superseded ADRs: they are the record of why the architecture is what it is.

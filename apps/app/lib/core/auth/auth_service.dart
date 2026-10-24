@@ -15,6 +15,10 @@ abstract class AuthService extends ChangeNotifier {
     String? inviteCode,
   });
 
+  /// A personal server's one local user (POST /auth/personal): no account,
+  /// no password; only a browser on the same computer gets a session.
+  Future<void> signInPersonal();
+
   /// Always ends the local session, even when the server cannot be reached.
   Future<void> signOut();
 
@@ -41,6 +45,9 @@ enum AuthFailureKind {
   tooManyAttempts,
   invalidInput,
   sessionExpired,
+
+  /// A personal server needs the key from the link `make start` printed.
+  personalKey,
   other,
 }
 

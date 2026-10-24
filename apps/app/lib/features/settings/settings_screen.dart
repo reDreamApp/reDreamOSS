@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:redream_app/core/auth/auth_service.dart';
+import 'package:redream_app/core/platform/platform_features.dart';
 import 'package:redream_app/core/server/server_config.dart';
 import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
@@ -120,7 +121,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final auth = context.watch<AuthService>();
     final settings = context.watch<AppSettings>();
     final profile = context.watch<ProfileState>();
-    final instance = context.watch<ServerConfig>().instance;
+    final server = context.watch<ServerConfig>();
+    final instance = server.instance;
+    // One local user on a personal server: no account to sign out of or
+    // change, and no other server.
+    final personal = instance?.personal ?? false;
     final contact = instance?.operatorContact;
     final privacy = webUri(instance?.privacyUrl ?? '');
 
@@ -158,22 +163,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: l10n.settingsProfileSection,
               color: teal,
               children: [
-                IconRow(
-                  icon: Icons.mail_outline,
-                  color: teal,
-                  title: l10n.settingsEmail,
-                  subtitle: auth.email ?? l10n.settingsEmailError,
-                  trailing: Icon(Icons.edit_outlined, color: teal),
-                  onTap: () => _push(const ChangeEmailScreen()),
-                ),
-                IconRow(
-                  icon: Icons.lock_outline,
-                  color: teal,
-                  title: l10n.settingsPassword,
-                  subtitle: '**********',
-                  trailing: Icon(Icons.edit_outlined, color: teal),
-                  onTap: () => _push(const ChangePasswordScreen()),
-                ),
+                if (!personal) ...[
+                  IconRow(
+                    icon: Icons.mail_outline,
+                    color: teal,
+                    title: l10n.settingsEmail,
+                    subtitle: auth.email ?? l10n.settingsEmailError,
+                    trailing: Icon(Icons.edit_outlined, color: teal),
+                    onTap: () => _push(const ChangeEmailScreen()),
+                  ),
+                  IconRow(
+                    icon: Icons.lock_outline,
+                    color: teal,
+                    title: l10n.settingsPassword,
+                    subtitle: '**********',
+                    trailing: Icon(Icons.edit_outlined, color: teal),
+                    onTap: () => _push(const ChangePasswordScreen()),
+                  ),
+                ],
                 IconRow(
                   icon: Icons.nightlight_outlined,
                   color: teal,
@@ -226,17 +233,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: l10n.settingsTheme,
                   trailing: const ThemeModeToggle(),
                 ),
-                const ReminderTile(color: violet),
-                IconRow(
-                  icon: Icons.dns_outlined,
-                  color: violet,
-                  title: l10n.settingsServer,
-                  subtitle: context.select<ServerConfig, String>(
-                    (s) => s.address,
+                if (PlatformFeatures.reminders)
+                  const ReminderTile(color: violet),
+                if (server.fixedAddress)
+                  IconRow(
+                    icon: Icons.dns_outlined,
+                    color: violet,
+                    title: l10n.settingsServer,
+                    subtitle: server.address,
+                  )
+                else
+                  IconRow(
+                    icon: Icons.dns_outlined,
+                    color: violet,
+                    title: l10n.settingsServer,
+                    subtitle: server.address,
+                    trailing: const RowChevron(),
+                    onTap: _changeServer,
                   ),
-                  trailing: const RowChevron(),
-                  onTap: _changeServer,
-                ),
               ],
             ),
             const SizedBox(height: 16),
@@ -316,18 +330,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: theme.textTheme.bodySmall,
               ),
             ),
-            const SizedBox(height: 8),
-            AppCard(
-              padding: EdgeInsets.zero,
-              child: IconRow(
-                icon: Icons.logout,
-                color: red,
-                title: l10n.settingsSignOut,
-                titleColor: red,
-                trailing: const RowChevron(),
-                onTap: _signOut,
+            if (!personal) ...[
+              const SizedBox(height: 8),
+              AppCard(
+                padding: EdgeInsets.zero,
+                child: IconRow(
+                  icon: Icons.logout,
+                  color: red,
+                  title: l10n.settingsSignOut,
+                  titleColor: red,
+                  trailing: const RowChevron(),
+                  onTap: _signOut,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),

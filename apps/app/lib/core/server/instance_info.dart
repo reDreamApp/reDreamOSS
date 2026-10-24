@@ -58,7 +58,7 @@ class InstanceInfo {
     );
   }
 
-  static const registrationModes = {'open', 'invite', 'closed'};
+  static const registrationModes = {'open', 'invite', 'closed', 'personal'};
 
   final int apiVersion;
 
@@ -83,6 +83,10 @@ class InstanceInfo {
 
   bool get inviteOnly => registration == 'invite';
   bool get registrationClosed => registration == 'closed';
+
+  /// One user on the computer running the server (`make start`): the app
+  /// signs in by itself, there is no account to manage.
+  bool get personal => registration == 'personal';
 
   Map<String, Object?> toJson() => {
     'name': name,

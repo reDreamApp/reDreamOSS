@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:redream_app/core/platform/platform_features.dart';
 import 'package:redream_app/core/storage/local_cipher.dart';
 import 'package:redream_app/core/storage/secure_audio_cache.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -77,7 +78,7 @@ class LocalStore {
 
   /// Removes every key that belongs to [userId] (keys end in `:<userId>`).
   Future<void> clearUser(String userId) async {
-    await SecureAudioCache.clearUser(userId);
+    if (PlatformFeatures.offlineAudio) await SecureAudioCache.clearUser(userId);
     for (final key in _prefs.getKeys().where((k) => k.endsWith(':$userId'))) {
       await remove(key);
     }

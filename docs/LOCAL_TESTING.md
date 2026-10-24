@@ -48,7 +48,17 @@ On first start the app asks for the server address. Type the scheme: an address 
 | iOS simulator | `http://localhost:8001` |
 | A phone on your Wi-Fi | `http://<your computer's LAN address>:8001`, with the server listening on all interfaces: `cd apps/server && uv run --env-file ../../.env uvicorn redream_api.main:app --host 0.0.0.0 --port 8001` |
 
-Debug builds accept `http://`; release builds only `https://`. On iOS, streaming rehearsal audio from an `http://` server that is neither `localhost` nor an IP address can fail under App Transport Security; "Save offline" still works. `--dart-define=DEFAULT_SERVER_URL=http://10.0.2.2:8001` presets the address and connects on a fresh install.
+Debug builds accept `http://`; release builds only `https://`, except for `localhost`, `127.0.0.1` and `::1`. On iOS, streaming rehearsal audio from an `http://` server that is neither `localhost` nor an IP address can fail under App Transport Security; "Save offline" still works. `--dart-define=DEFAULT_SERVER_URL=http://10.0.2.2:8001` presets the address and connects on a fresh install.
+
+## The web app and personal mode
+
+`make start` runs personal mode as people use it (README). While working on the app, build the web app from your checkout instead of downloading the release's:
+
+```bash
+uv run --project apps/server python scripts/start.py --build-web     # flutter build web, then the server on :8000
+```
+
+The web app talks to the server it was loaded from, so `fvm flutter run -d chrome` against `make api-dev` (another origin, no CORS) does not work: build it and let the server serve it (`WEB_DIR`). Personal mode keeps its SQLite file, audio, web build and sign-in key (`personal.key`) in `apps/server/data/`; delete that folder for a fresh start. The browser signs in with the key from the address (`http://localhost:8000/#key=…`, printed at start); to call the API yourself: `curl -X POST -H "X-Personal-Key: $(cat apps/server/data/personal.key)" http://localhost:8000/api/v1/auth/personal`.
 
 ## The live smoke test
 

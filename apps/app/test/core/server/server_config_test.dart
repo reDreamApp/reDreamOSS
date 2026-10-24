@@ -30,6 +30,7 @@ void main() {
 
   ServerConfig config({
     String defaultUrl = '',
+    String? pageOrigin,
     bool httpsOnly = false,
     http.Client? client,
   }) => ServerConfig(
@@ -37,6 +38,7 @@ void main() {
     consentVersion: _consent,
     httpClient: client ?? api.httpClient(),
     defaultUrl: defaultUrl,
+    pageOrigin: pageOrigin,
     httpsOnly: httpsOnly,
   );
 
@@ -91,6 +93,26 @@ void main() {
         ServerConfig.normalize('dreams.example.org', httpsOnly: true),
         'https://dreams.example.org',
       );
+    });
+
+    test('plain http stays allowed on this computer, also in release', () {
+      String release(String input) =>
+          ServerConfig.normalize(input, httpsOnly: true);
+
+      expect(release('http://localhost:8000'), 'http://localhost:8000');
+      expect(release('http://127.0.0.1:8000'), 'http://127.0.0.1:8000');
+      expect(release('http://[::1]:8000'), 'http://[::1]:8000');
+      for (final other in [
+        'http://127.example.org',
+        'http://localhost.example.org',
+        'http://192.168.1.20:8000',
+      ]) {
+        expect(
+          () => release(other),
+          _fails(ServerFailureKind.httpsRequired),
+          reason: other,
+        );
+      }
     });
   });
 
@@ -301,6 +323,42 @@ void main() {
       final server = config(defaultUrl: 'https://preset.example');
       expect(server.takeAutoConnect(), isFalse);
       expect(server.baseUrl, 'http://fake');
+    });
+  });
+
+  group('the web app (its server is the page origin)', () {
+    test('connects to it on every start, with nothing to change', () async {
+      final first = config(pageOrigin: 'http://fake');
+      expect(first.fixedAddress, isTrue);
+      expect(first.prefill, 'http://fake');
+      expect(first.takeAutoConnect(), isTrue);
+      await first.connect(first.prefill);
+      expect(first.baseUrl, 'http://fake');
+      // A failed connect is tried again when the address screen comes back.
+      expect(first.takeAutoConnect(), isTrue);
+
+      final again = config(pageOrigin: 'http://fake');
+      expect(again.isConnected, isTrue);
+      expect(again.baseUrl, 'http://fake');
+    });
+
+    test('an address kept for another server is not used', () async {
+      api.on('GET /api/v1/instance', (_, _) => instanceJson());
+      await config().connect('http://other.example');
+
+      final web = config(pageOrigin: 'http://fake');
+
+      expect(web.isConnected, isFalse);
+      expect(web.prefill, 'http://fake');
+    });
+
+    test('a localhost page works in a release build', () {
+      final web = config(pageOrigin: 'http://localhost:8000', httpsOnly: true);
+      expect(web.prefill, 'http://localhost:8000');
+      expect(
+        () => ServerConfig.normalize(web.prefill, httpsOnly: true),
+        returnsNormally,
+      );
     });
   });
 

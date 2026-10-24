@@ -37,7 +37,11 @@ class ApiClient {
        _timeout = timeout;
 
   /// A 401 here is a wrong password, not an ended session.
-  static const _signInPaths = {'/api/v1/auth/login', '/api/v1/auth/register'};
+  static const _signInPaths = {
+    '/api/v1/auth/login',
+    '/api/v1/auth/register',
+    '/api/v1/auth/personal',
+  };
 
   final String Function() _baseUrl;
   final TokenProvider _tokenProvider;
@@ -57,6 +61,13 @@ class ApiClient {
     Object? body,
     Duration? timeout,
   ]) => _map(_request('POST', path, body: body, timeout: timeout));
+
+  /// A POST without a body that carries [headers] as well (the personal
+  /// server's key).
+  Future<Map<String, dynamic>> postWithHeaders(
+    String path,
+    Map<String, String> headers,
+  ) => _map(_request('POST', path, headers: headers));
 
   Future<Map<String, dynamic>> put(String path, Object? body) =>
       _map(_request('PUT', path, body: body));
@@ -151,13 +162,20 @@ class ApiClient {
     Object? body,
     Map<String, String>? query,
     Duration? timeout,
+    Map<String, String>? headers,
   }) async {
     // The address is read with the token, also on the retry: both belong
     // to the server in use at that moment.
     final res = await _authorized(
       path,
-      (token) =>
-          _send(method, _uri(path, query), body, timeout ?? _timeout, token),
+      (token) => _send(
+        method,
+        _uri(path, query),
+        body,
+        timeout ?? _timeout,
+        token,
+        headers,
+      ),
     );
     return _decode(res);
   }
@@ -220,9 +238,10 @@ class ApiClient {
     Uri uri,
     Object? body,
     Duration timeout,
-    String? token,
-  ) async {
-    final headers = _headers(token, json: body != null);
+    String? token, [
+    Map<String, String>? extra,
+  ]) async {
+    final headers = {..._headers(token, json: body != null), ...?extra};
     final encoded = body == null ? null : jsonEncode(body);
     return _guard(() {
       final future = switch (method) {

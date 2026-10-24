@@ -2,3 +2,8 @@ reDreamOSS, the open version of reDreamAI
 Copyright 2026 Daniel Menzel, Katharina Lüth and Ramon Zacharias
 
 Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+The web app bundles two fonts the Flutter engine loads (apps/app/web/fonts),
+each with its licence next to it:
+- Roboto, Copyright Google LLC, Apache License 2.0
+- Noto Sans Symbols, Copyright The Noto Project Authors, SIL Open Font License 1.1

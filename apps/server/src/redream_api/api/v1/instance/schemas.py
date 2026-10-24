@@ -35,7 +35,7 @@ class InstanceOut(BaseModel):
     api_version: int
     consent_version: str
     """The consent-text version a grant must name (core/consent)."""
-    registration: Literal["open", "invite", "closed"]
+    registration: Literal["open", "invite", "closed", "personal"]
     daily_ai_requests_per_user: int
     """0 = no cap."""
     features: InstanceFeaturesOut

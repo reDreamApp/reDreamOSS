@@ -2,7 +2,7 @@
 
 `main` is the only long-lived branch; CI proves every push (server tests and lint, the Postgres schema from zero on Postgres 17 against the ORM models, the compose stack built and started with a login, the Flutter analyzer and tests). A release is a version tag on a commit of `main`: `vMAJOR.MINOR.PATCH`.
 
-- **The app**: pushing the tag runs `.github/workflows/release-apk.yml`. It refuses a tag whose commit is not on `main`, analyzes and tests the app, builds a release APK signed with the project's upload key (version name from the tag, version code derived from it: 1.2.3 → 1002003; `pubspec.yaml`'s version is not used) and attaches it, with its SHA-256, to a GitHub Release. One APK serves every server.
+- **The app**: pushing the tag runs `.github/workflows/release-apk.yml`. It refuses a tag whose commit is not on `main`, analyzes and tests the app, builds a release APK signed with the project's upload key (version name from the tag, version code derived from it: 1.2.3 → 1002003; `pubspec.yaml`'s version is not used) and attaches it, with its SHA-256, to a GitHub Release. One APK serves every server. The same release carries the web app (`reDreamOSS-web-<tag>.zip` + `.sha256`): `make start` downloads the one for the checkout's newest tag, so a tag without a release leaves personal-mode users to build it themselves.
 - **The server**: operators update with `git pull` and `make update`; the server container applies pending migrations before it starts (a failed migration stops it), so code and schema always match.
 
 ## Order of changes
@@ -16,8 +16,9 @@ The app checks the server's `GET /api/v1/instance` when people connect: `api_ver
 ## How a schema change ships
 
 1. Add the next numbered file, `apps/server/migrations/000N_feature_x.sql` (plain SQL without BEGIN/COMMIT: the runner applies each file and its `schema_migrations` row in one transaction), and change the ORM models to match, in the same commit. Never edit a file that was applied anywhere: the runner refuses one whose checksum changed.
-2. Check locally: `make db-migrate`, then `make db-test` with `TEST_DATABASE_URL` pointing at an empty, throwaway database.
-3. Merge to `main`; CI's `postgres-schema` job re-proves it from zero.
+2. Add the same change for personal mode's SQLite files: an entry for the new number in `SQLITE_STEPS` (`apps/server/src/redream_api/db/migrate.py`), SQLite statements that bring an existing file from the previous version to this one. A test fails without it.
+3. Check locally: `make db-migrate`, then `make db-test` with `TEST_DATABASE_URL` pointing at an empty, throwaway database.
+4. Merge to `main`; CI's `postgres-schema` job re-proves it from zero.
 
 The default server tests build their tables from the ORM models on SQLite, so on their own they never see a model change without its migration (or the reverse); `tests/pg` does.
 

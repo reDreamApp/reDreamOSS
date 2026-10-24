@@ -2,6 +2,8 @@
 
 One server serves everyone you invite. The app is the same for every server: people install it, type your server's address once and sign up with your invite code. Nothing goes through the project; you are the operator.
 
+Only for yourself? You need no server: `make start` runs reDreamOSS on your own computer, in the browser (see the [README](../README.md#for-yourself-on-your-computer)).
+
 ## What you need
 
 - A Linux box with Docker Engine and the Compose plugin. 1 vCPU, 1–2 GB RAM and a few GB of disk are plenty for a small group; the models run at your provider, not on the box.
@@ -107,7 +109,7 @@ The dumps contain health-related data in plain text: encrypt them (for example w
 
 - One server process (`--workers 1`): the rate limits and the daily cap are counted in memory and reset on restart. Do not scale the server container.
 - The server logs no message content and no client addresses in access logs; `docker compose logs` keeps a few rotated MB per service.
-- Web and desktop apps are not supported; Android and iOS only.
+- The apps are Android, iOS and the web app; no desktop builds. A shared server can serve the web app too: put the release's `reDreamOSS-web-*.zip` unpacked into a folder and set `WEB_DIR` to it (in compose, mount it into the server container).
 
 ## Your duties as the operator
 

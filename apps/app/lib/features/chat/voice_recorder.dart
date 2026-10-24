@@ -1,8 +1,7 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:redream_app/features/chat/recording_file.dart'
+    if (dart.library.js_interop) 'package:redream_app/features/chat/recording_file_web.dart';
 
 /// A finished voice recording, ready for transcription.
 class VoiceRecording {
@@ -37,14 +36,13 @@ class RecordVoiceRecorder implements IVoiceRecorder {
 
   @override
   Future<void> start() async {
-    final dir = await getTemporaryDirectory();
     await _recorder.start(
       const RecordConfig(
         encoder: AudioEncoder.wav,
         sampleRate: 16000,
         numChannels: 1,
       ),
-      path: '${dir.path}/$_fileName',
+      path: await recordingTarget(_fileName),
     );
   }
 
@@ -52,16 +50,8 @@ class RecordVoiceRecorder implements IVoiceRecorder {
   Future<VoiceRecording?> stop() async {
     final path = await _recorder.stop();
     if (path == null) return null;
-    final file = File(path);
-    if (!file.existsSync()) return null;
-    final bytes = await file.readAsBytes();
-    // The narration is sensitive — never leave the temp file behind.
-    try {
-      file.deleteSync();
-    } on FileSystemException {
-      // Best effort; the OS clears the temp dir eventually.
-    }
-    if (bytes.isEmpty) return null;
+    final bytes = await takeRecording(path);
+    if (bytes == null || bytes.isEmpty) return null;
     return VoiceRecording(bytes: bytes, fileName: _fileName);
   }
 

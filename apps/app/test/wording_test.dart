@@ -78,6 +78,17 @@ Map<String, String> _plistTexts() => {
     ).firstMatch(File(path).readAsStringSync())![1]!,
 };
 
+/// What a browser shows about the web app (English only).
+Map<String, String> _webTexts() => {
+  'web/index.html': RegExp(
+    '<meta name="description" content="([^"]*)">',
+  ).firstMatch(File('web/index.html').readAsStringSync())![1]!,
+  'web/manifest.json':
+      (jsonDecode(File('web/manifest.json').readAsStringSync())
+              as Map<String, dynamic>)['description']
+          as String,
+};
+
 List<String> _claimHits(Map<String, String> texts, String lang) => [
   for (final MapEntry(:key, :value) in texts.entries)
     for (final m in _claims[lang]!.allMatches(
@@ -115,6 +126,13 @@ void main() {
   test('the microphone texts follow the same rules', () {
     final texts = _plistTexts();
     expect(texts, hasLength(1));
+    expect(_claimHits(texts, 'en'), isEmpty);
+    expect(texts.values.where(_operatorBound.hasMatch), isEmpty);
+  });
+
+  test('the web page texts follow the same rules', () {
+    final texts = _webTexts();
+    expect(texts, hasLength(2));
     expect(_claimHits(texts, 'en'), isEmpty);
     expect(texts.values.where(_operatorBound.hasMatch), isEmpty);
   });

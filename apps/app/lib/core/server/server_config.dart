@@ -32,30 +32,38 @@ class ServerFailure implements Exception {
 /// The server this app talks to: chosen once on the address screen (or
 /// preset with `--dart-define=DEFAULT_SERVER_URL=...`) and kept in
 /// [LocalStore] with its last [InstanceInfo], so the app also starts
-/// offline. Release builds accept https only; dart:io follows neither
-/// Android's cleartext rule nor iOS's ATS, so it is checked here.
+/// offline. Release builds accept https only, except on this computer
+/// (localhost); dart:io follows neither Android's cleartext rule nor iOS's
+/// ATS, so it is checked here.
+///
+/// The web app is served by its server: `pageOrigin` (the page's own origin)
+/// is then the one address, connected on every start, never changed.
 class ServerConfig extends ChangeNotifier {
   ServerConfig(
     this._store, {
     required String consentVersion,
     http.Client? httpClient,
     String defaultUrl = const String.fromEnvironment('DEFAULT_SERVER_URL'),
+    String? pageOrigin,
     bool httpsOnly = kReleaseMode,
   }) : _consentVersion = consentVersion,
        _http = httpClient ?? http.Client(),
-       _defaultUrl = defaultUrl.trim(),
+       _defaultUrl = (pageOrigin ?? defaultUrl).trim(),
+       _fixed = pageOrigin != null,
        _httpsOnly = httpsOnly {
     final stored = _store.getString(_urlKey);
     final last = _store.getString(_lastKey);
-    final url = stored == null ? null : _validOrNull(stored);
+    var url = stored == null ? null : _validOrNull(stored);
+    if (_fixed && url != _validOrNull(_defaultUrl)) url = null;
     final info = _storedInfo();
     if (url != null && info != null) {
       _set(url, info, notify: false);
     } else {
-      _prefill = stored ?? last;
+      _prefill = _fixed ? null : stored ?? last;
     }
     // Someone who left a server chooses the next one themselves.
-    _autoConnect = stored == null && last == null && _defaultUrl.isNotEmpty;
+    _autoConnect =
+        _fixed || (stored == null && last == null && _defaultUrl.isNotEmpty);
   }
 
   static const _urlKey = 'server_url';
@@ -67,6 +75,7 @@ class ServerConfig extends ChangeNotifier {
   final String _consentVersion;
   final http.Client _http;
   final String _defaultUrl;
+  final bool _fixed;
   final bool _httpsOnly;
   final _url = ValueNotifier<String>('');
 
@@ -84,6 +93,10 @@ class ServerConfig extends ChangeNotifier {
   InstanceInfo? get instance => _instance;
   bool get isConnected => _baseUrl != null;
 
+  /// The web app's address is the page's own: there is no other server to
+  /// change to.
+  bool get fixedAddress => _fixed;
+
   /// [baseUrl] as a listenable ('' without one): a session belongs to one
   /// server address.
   ValueListenable<String> get url => _url;
@@ -99,7 +112,7 @@ class ServerConfig extends ChangeNotifier {
   /// tried without asking; never after a server was left.
   bool takeAutoConnect() {
     final take = _autoConnect;
-    _autoConnect = false;
+    _autoConnect = _fixed;
     return take;
   }
 
@@ -112,7 +125,7 @@ class ServerConfig extends ChangeNotifier {
     await _store.setString(_urlKey, url);
     await _store.setJson(_infoKey, info.toJson());
     await _store.remove(_lastKey);
-    _autoConnect = false;
+    _autoConnect = _fixed;
     _set(url, info);
   }
 
@@ -146,7 +159,7 @@ class ServerConfig extends ChangeNotifier {
     final url = _baseUrl;
     if (url == null) return;
     _prefill = url;
-    _autoConnect = false;
+    _autoConnect = _fixed;
     _set(null, null);
     await _store.setString(_lastKey, url);
     await _store.remove(_urlKey);
@@ -169,7 +182,7 @@ class ServerConfig extends ChangeNotifier {
         uri.hasFragment) {
       throw invalid;
     }
-    if (httpsOnly && !uri.isScheme('https')) {
+    if (httpsOnly && !uri.isScheme('https') && !isLoopback(uri.host)) {
       throw const ServerFailure(ServerFailureKind.httpsRequired);
     }
     return Uri(
@@ -179,6 +192,12 @@ class ServerConfig extends ChangeNotifier {
       path: uri.path.replaceAll(RegExp(r'/+$'), ''),
     ).toString();
   }
+
+  /// This computer: plain http never leaves it.
+  static bool isLoopback(String host) =>
+      host == 'localhost' ||
+      host == '::1' ||
+      RegExp(r'^127(\.\d{1,3}){3}$').hasMatch(host);
 
   /// `GET /api/v1/instance` without a token. Redirects are not followed: a
   /// server must answer at the address people typed.

@@ -115,10 +115,11 @@ class _SignInScreenState extends State<SignInScreen> {
                       color: BrandTheme.of(context).muted,
                     ),
                   ),
-                  TextButton(
-                    onPressed: _busy ? null : () => changeServer(context),
-                    child: Text(l10n.serverChange),
-                  ),
+                  if (!server.fixedAddress)
+                    TextButton(
+                      onPressed: _busy ? null : () => changeServer(context),
+                      child: Text(l10n.serverChange),
+                    ),
                 ],
               ),
             ),

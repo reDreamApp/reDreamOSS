@@ -10,8 +10,14 @@ import 'package:redream_app/core/auth/session_store.dart';
 /// The session is held in memory, so the getters stay synchronous, and kept
 /// in [SessionStore] across launches.
 class TokenAuthService extends AuthService {
-  TokenAuthService(this._api, this._store, StoredSession? initial, this._server)
-    : _session = initial?.server == _server.value ? initial : null {
+  TokenAuthService(
+    this._api,
+    this._store,
+    StoredSession? initial,
+    this._server, {
+    String? Function()? personalKey,
+  }) : _personalKey = personalKey,
+       _session = initial?.server == _server.value ? initial : null {
     // A token is never sent to a host it was not issued by.
     if (initial != null && _session == null) _store.clear().ignore();
     if (_session case final session?) _owners[session.token] = session.userId;
@@ -20,6 +26,9 @@ class TokenAuthService extends AuthService {
 
   final ApiClient _api;
   final SessionStore _store;
+
+  /// The personal server's key (PersonalKey), when this app has one.
+  final String? Function()? _personalKey;
 
   /// Address of the server in use; a session for another one is dropped.
   final ValueListenable<String> _server;
@@ -59,6 +68,17 @@ class TokenAuthService extends AuthService {
       'password': password,
       if (code.isNotEmpty) 'invite_code': code,
     });
+  }
+
+  /// Without a key the server refuses (403): AuthFailureKind.personalKey.
+  @override
+  Future<void> signInPersonal() {
+    final key = _personalKey?.call();
+    return _start(
+      '/api/v1/auth/personal',
+      null,
+      headers: {'X-Personal-Key': ?key},
+    );
   }
 
   /// The logout request leaves with the token and the address before the
@@ -133,11 +153,17 @@ class TokenAuthService extends AuthService {
   /// belongs to the server before.
   Future<void> _start(
     String path,
-    Map<String, Object?> body, {
+    Map<String, Object?>? body, {
     bool login = false,
+    Map<String, String>? headers,
   }) async {
     final server = _server.value;
-    final res = await _call(() => _api.post(path, body), login: login);
+    final res = await _call(
+      () => headers == null
+          ? _api.post(path, body)
+          : _api.postWithHeaders(path, headers),
+      login: login,
+    );
     if (_server.value != server) return;
     final user = res['user'] as Map<String, dynamic>;
     await _save(
@@ -210,6 +236,8 @@ class TokenAuthService extends AuthService {
         'registration closed' => AuthFailureKind.registrationClosed,
         'invalid invite code' => AuthFailureKind.inviteInvalid,
         'wrong password' => AuthFailureKind.wrongPassword,
+        'personal key required' ||
+        'wrong personal key' => AuthFailureKind.personalKey,
         _ => AuthFailureKind.other,
       },
       409 => AuthFailureKind.emailTaken,

@@ -32,6 +32,7 @@ HELPLINE_TEXT_MAX_LEN = 1000
 INVITE_CODE_MIN_LEN = 8
 # The register request accepts invite codes up to this length.
 INVITE_CODE_MAX_LEN = 256
+PERSONAL_KEY_MIN_LEN = 32
 _HELPLINE_TEXT_DEFAULTS = {
     "helpline_text_en": HELPLINE_TEXT_EN_DEFAULT,
     "helpline_text_de": HELPLINE_TEXT_DE_DEFAULT,
@@ -54,11 +55,17 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"
 
     # Accounts. open: anyone may register; invite: only with INVITE_CODE;
-    # closed: only the CLI (python -m redream_api.cli) creates users.
-    registration_mode: Literal["open", "invite", "closed"] = "invite"
+    # closed: only the CLI (python -m redream_api.cli) creates users;
+    # personal: one local user, signed in by POST /auth/personal from this
+    # machine only and with PERSONAL_KEY (`make start` sets both).
+    registration_mode: Literal["open", "invite", "closed", "personal"] = "invite"
     # Required with invite, INVITE_CODE_MIN_LEN..INVITE_CODE_MAX_LEN characters,
     # or startup fails.
     invite_code: str = ""
+    # Required with personal (at least PERSONAL_KEY_MIN_LEN characters): the
+    # browser sends it to /auth/personal. scripts/start.py keeps it in
+    # apps/server/data/personal.key and hands it to the browser in the URL.
+    personal_key: str = ""
 
     # Chat turns + transcriptions + rehearsal renderings per user per UTC day
     # (core/limits, in memory); 0 = off.
@@ -66,6 +73,10 @@ class Settings(BaseSettings):
 
     # Lifetime of the signed rehearsal-audio link (services/audio_links).
     rehearsal_url_ttl_seconds: int = Field(default=300, ge=60, le=3600)
+
+    # The built web app (apps/app, flutter build web), served at / when this
+    # folder holds an index.html. Blank = no web app (the API only).
+    web_dir: str = ""
 
     # Instance, shown in the app when people connect (GET /api/v1/instance).
     # Optional; blank = unset (None). OPERATOR_CONTACT is free text (an email
@@ -170,6 +181,11 @@ class Settings(BaseSettings):
                 f"INVITE_CODE must be at least {INVITE_CODE_MIN_LEN} characters while "
                 "REGISTRATION_MODE=invite (the default); set it, or set "
                 "REGISTRATION_MODE=open or REGISTRATION_MODE=closed"
+            )
+        if self.registration_mode == "personal" and len(self.personal_key) < PERSONAL_KEY_MIN_LEN:
+            raise ValueError(
+                f"PERSONAL_KEY must be at least {PERSONAL_KEY_MIN_LEN} characters while "
+                "REGISTRATION_MODE=personal (make start sets it)"
             )
         if self.registration_mode == "invite" and len(self.invite_code) > INVITE_CODE_MAX_LEN:
             raise ValueError(

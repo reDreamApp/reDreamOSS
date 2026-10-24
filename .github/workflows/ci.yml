@@ -183,7 +183,7 @@ jobs:
         run: docker compose --profile caddy down -v
 
   app:
-    name: apps/app — flutter analyze + test
+    name: apps/app — flutter analyze + test + web build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -197,4 +197,8 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter analyze
+      # The web SDK, so test/web_fonts_test.dart checks web/fonts against it.
+      - run: flutter precache --web
       - run: flutter test
+      # What make start serves; the release builds it with the same flags.
+      - run: flutter build web --release --no-web-resources-cdn

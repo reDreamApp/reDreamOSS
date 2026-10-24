@@ -16,6 +16,11 @@ Each file runs together with its schema_migrations row in one transaction,
 so a file must not contain BEGIN/COMMIT (refused before anything runs). An
 applied file is never run again; one whose sha256 changed since stops the
 run (exit 1). Output never contains the URL.
+
+A sqlite+aiosqlite:// URL (personal mode) gets its tables from the ORM models,
+which mirror the migrations (tests/pg checks that), and keeps the number of
+the newest migration in PRAGMA user_version. A later migration upgrades an
+existing SQLite file with its own step in SQLITE_STEPS (a test requires one).
 """
 
 from __future__ import annotations
@@ -32,7 +37,7 @@ from typing import Any
 import asyncpg
 from sqlalchemy.dialects.postgresql.asyncpg import dialect as _AsyncpgDialect
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
+from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 
 # apps/server/migrations in the repo; /app/migrations in the image.
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
@@ -55,6 +60,64 @@ _TXN_CONTROL = re.compile(
 
 class MigrationError(Exception):
     """A refusal; the message is printed as is."""
+
+
+# Migration number -> the SQLite statements that bring an existing personal
+# database from the previous number to this one. Migration 0001 has none: a
+# new file is created from the models at the newest version.
+SQLITE_STEPS: dict[int, tuple[str, ...]] = {}
+
+
+def _number(name: str) -> int:
+    return int(name.split("_", 1)[0])
+
+
+async def run_sqlite(database_url: str, migrations: list[tuple[str, str, str]]) -> str:
+    """Creates or upgrades a SQLite database; returns what was done."""
+    from sqlalchemy import event, text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from . import models as _models  # noqa: F401 — registers the tables
+    from .base import Base
+
+    newest = _number(migrations[-1][0]) if migrations else 0
+    engine = create_async_engine(database_url)
+
+    # One real transaction for the whole run: the sqlite3 driver commits DDL
+    # statement by statement on its own, so a step that fails half-way would
+    # leave its first statements applied under the old version number.
+    @event.listens_for(engine.sync_engine, "connect")
+    def _no_driver_transactions(dbapi_connection: Any, _record: Any) -> None:
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine.sync_engine, "begin")
+    def _begin(conn: Any) -> None:
+        conn.exec_driver_sql("BEGIN")
+
+    try:
+        async with engine.begin() as conn:
+            version = (await conn.execute(text("PRAGMA user_version"))).scalar_one()
+            tables = (
+                await conn.execute(text("SELECT count(*) FROM sqlite_master WHERE type='table'"))
+            ).scalar_one()
+            if version == 0 and tables == 0:
+                await conn.run_sync(Base.metadata.create_all)
+                await conn.execute(text(f"PRAGMA user_version = {newest}"))
+                return f"created at {newest:04d}"
+            if version == 0:
+                raise MigrationError("the SQLite file has tables but no schema version")
+            if version > newest:
+                return f"warning: database at {version:04d}, newer than this checkout"
+            for number in range(version + 1, newest + 1):
+                step = SQLITE_STEPS.get(number)
+                if step is None:
+                    raise MigrationError(f"no SQLite step for migration {number:04d}")
+                for statement in step:
+                    await conn.execute(text(statement))
+                await conn.execute(text(f"PRAGMA user_version = {number}"))
+            return f"at {newest:04d}" if version == newest else f"upgraded to {newest:04d}"
+    finally:
+        await engine.dispose()
 
 
 def connect_args(database_url: str) -> dict[str, Any]:
@@ -174,6 +237,17 @@ def main(directory: Path = MIGRATIONS_DIR) -> int:
     if not database_url:
         print("migrate: DATABASE_URL is not set", file=sys.stderr)
         return 1
+    if database_url.startswith("sqlite+aiosqlite://"):
+        try:
+            print(f"migrate: SQLite {asyncio.run(run_sqlite(database_url, load(directory)))}")
+        except SQLAlchemyError as exc:
+            # The run is one transaction: nothing of it was applied.
+            print(f"migrate: SQLite unchanged, {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        except MigrationError as exc:
+            print(f"migrate: {exc}", file=sys.stderr)
+            return 1
+        return 0
     try:
         applied, skipped, unknown = asyncio.run(run(database_url, load(directory)))
     except MigrationError as exc:

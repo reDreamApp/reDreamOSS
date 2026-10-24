@@ -54,6 +54,7 @@ void main() {
     StoredSession? initial,
     String server = _server,
     ValueNotifier<String>? origin,
+    String? personalKey,
   }) {
     late final TokenAuthService auth;
     final client = api.client(
@@ -65,6 +66,7 @@ void main() {
       store,
       initial,
       origin ?? ValueNotifier(server),
+      personalKey: () => personalKey,
     )..addListener(() => notified++);
   }
 
@@ -129,6 +131,65 @@ void main() {
         expect(notified, 3);
       },
     );
+
+    test('a personal server signs its one user in without a body', () async {
+      http.Request? sent;
+      api.on('POST /api/v1/auth/personal', (request, _) {
+        sent = request;
+        return _authJson('rdo_personal', email: 'personal@localhost');
+      });
+      final auth = service();
+
+      await auth.signInPersonal();
+
+      expect(sent!.body, isEmpty);
+      expect(sent!.headers['Authorization'], isNull);
+      expect(auth.accessToken, 'rdo_personal');
+      expect(auth.email, 'personal@localhost');
+      expect((await store.read())!.server, _server);
+    });
+
+    test('the personal key goes along as X-Personal-Key', () async {
+      String? sentKey;
+      api.on('POST /api/v1/auth/personal', (request, _) {
+        sentKey = request.headers['X-Personal-Key'];
+        return _authJson('rdo_personal', email: 'personal@localhost');
+      });
+
+      await service(personalKey: 'k3y_from-the-link').signInPersonal();
+
+      expect(sentKey, 'k3y_from-the-link');
+    });
+
+    test('a missing or wrong key is personalKey', () async {
+      for (final detail in ['personal key required', 'wrong personal key']) {
+        String? sentKey = 'unset';
+        api.on('POST /api/v1/auth/personal', (request, _) {
+          sentKey = request.headers['X-Personal-Key'];
+          throw FakeApiError(403, detail);
+        });
+        final key = detail == 'wrong personal key' ? 'an-old-key-123456' : null;
+
+        final e = await failure(service(personalKey: key).signInPersonal());
+
+        expect(e.kind, AuthFailureKind.personalKey, reason: detail);
+        expect(sentKey, key, reason: detail);
+      }
+    });
+
+    test('a personal sign-in from another machine fails', () async {
+      api.on(
+        'POST /api/v1/auth/personal',
+        (_, _) =>
+            throw FakeApiError(403, 'personal sign-in only on this machine'),
+      );
+      final auth = service();
+
+      final e = await failure(auth.signInPersonal());
+
+      expect(e.kind, AuthFailureKind.other);
+      expect(auth.isSignedIn, isFalse);
+    });
 
     test('each refusal becomes its AuthFailure kind', () async {
       final cases = <(String, FakeApiError, AuthFailureKind)>[

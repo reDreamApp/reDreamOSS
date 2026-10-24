@@ -102,7 +102,9 @@ def test_values_with_a_dollar_are_single_quoted() -> None:
 def test_local_commands_read_the_root_env() -> None:
     found = 0
     for path in LOCAL_COMMAND_DOCS:
-        for options in re.findall(r"uv run([^`\n]*?)python ", path.read_text()):
+        for options, script in re.findall(r"uv run([^`\n]*?)python ([\w./-]+)", path.read_text()):
+            if script == "scripts/start.py":
+                continue  # make start: the script passes .env to the server itself
             found += 1
             assert "--env-file ../../.env" in options, f"{path}: uv run{options}python"
     assert found >= 4  # .env.example, apps/server/README.md, cli.py, migrate.py

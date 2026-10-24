@@ -1,7 +1,8 @@
-# Builds the signed Android APK for a version tag and attaches it to a GitHub
-# Release. Push a tag like v1.2.0 on a commit of main; see RELEASING.md for
-# the one-time signing-key setup (four repository secrets).
-name: Release APK
+# Builds the signed Android APK and the web app for a version tag and attaches
+# both to a GitHub Release (`make start` downloads the web app for its tag).
+# Push a tag like v1.2.0 on a commit of main; see RELEASING.md for the
+# one-time signing-key setup (four repository secrets).
+name: Release
 
 on:
   push:
@@ -86,6 +87,9 @@ jobs:
       - name: Remove the signing key
         if: always()
         run: rm -f android/key.properties android/app/upload-keystore.jks
+      # The same flags as scripts/start.py's local build: nothing from a CDN.
+      - name: Build the web app
+        run: flutter build web --release --no-web-resources-cdn
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,7 +97,10 @@ jobs:
           apk="reDreamOSS-$GITHUB_REF_NAME.apk"
           cp build/app/outputs/flutter-apk/app-release.apk "$apk"
           sha256sum "$apk" > "$apk.sha256"
-          gh release create "$GITHUB_REF_NAME" "$apk" "$apk.sha256" \
+          web="reDreamOSS-web-$GITHUB_REF_NAME.zip"
+          (cd build/web && zip -qrX "../../$web" .)
+          sha256sum "$web" > "$web.sha256"
+          gh release create "$GITHUB_REF_NAME" "$apk" "$apk.sha256" "$web" "$web.sha256" \
             --verify-tag \
             --title "reDreamOSS $GITHUB_REF_NAME" \
-            --notes "Android app for any reDreamOSS server: install it, then enter your server's address (it must be https). Check the download against the .sha256 file. Server changes in this version are in the commit history; update servers before handing out a new app (RELEASING.md)."
+            --notes "Android app for any reDreamOSS server: install it, then enter your server's address (it must be https). The web app (reDreamOSS-web-*.zip) is what make start serves on your own computer; it is fetched automatically. Check downloads against their .sha256 files. Server changes in this version are in the commit history; update servers before handing out a new app (RELEASING.md)."

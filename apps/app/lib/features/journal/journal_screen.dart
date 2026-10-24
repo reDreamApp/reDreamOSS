@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:redream_app/core/platform/platform_features.dart';
 import 'package:redream_app/core/theme/app_theme.dart';
 import 'package:redream_app/core/utils/errors.dart';
 import 'package:redream_app/core/widgets/app_button.dart';
@@ -105,14 +106,17 @@ class _JournalScreenState extends State<JournalScreen> {
                       expand: false,
                       onPressed: _addDream,
                     ),
-                    const SizedBox(width: 12),
-                    AppButton(
-                      label: l10n.journalNotifications,
-                      icon: Icons.notifications_none,
-                      style: AppButtonStyle.outlined,
-                      expand: false,
-                      onPressed: _showReminders,
-                    ),
+                    // No reminders on the web: nothing to set up here.
+                    if (PlatformFeatures.reminders) ...[
+                      const SizedBox(width: 12),
+                      AppButton(
+                        label: l10n.journalNotifications,
+                        icon: Icons.notifications_none,
+                        style: AppButtonStyle.outlined,
+                        expand: false,
+                        onPressed: _showReminders,
+                      ),
+                    ],
                   ],
                 ),
               ),
