@@ -14,6 +14,7 @@ InProcessAiClient yields them: stripped `data: <payload>` strings.
 
 from __future__ import annotations
 
+import contextlib
 import json
 
 from redream_api.core.config import HELPLINE_TEXT_EN_DEFAULT
@@ -248,6 +249,108 @@ async def test_disconnect_pre_finalize_rolls_back_user_message(db, fake_user, fa
     await gen.aclose()  # simulates Starlette tearing the generator down
 
     assert await ChatMessageRepo(db).list_for_chat(chat_id) == []
+
+
+async def test_disconnect_by_cancellation_still_rolls_back(db, fake_user, fake_ai, monkeypatch):
+    """Starlette ends a stream whose client went away by cancelling its task
+    group's scope, and anyio re-delivers that cancellation at every await in
+    the scope: the rollback in the handler must be shielded, or its first
+    await is cancelled and the orphaned user message stays (and a resend
+    duplicates it)."""
+    import anyio
+
+    from redream_api.db.repositories.chat_message_repo import ChatMessageRepo
+
+    async def frames():
+        yield _content("You turn ")
+        await anyio.sleep_forever()  # the model is still writing
+
+    monkeypatch.setattr(fake_ai, "chat_stream", lambda payload: frames())
+    chats_routes, chat_id, setup = await _make_setup(db, fake_user, fake_ai)
+    content_sent = anyio.Event()
+
+    async def respond():
+        async for frame in chats_routes._stream_ai_turn(db, fake_ai, fake_user, setup):
+            if "content" in frame:
+                content_sent.set()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(respond)
+        await content_sent.wait()
+        tg.cancel_scope.cancel()  # what StreamingResponse does on a disconnect
+
+    assert await ChatMessageRepo(db).list_for_chat(chat_id) == []
+
+
+async def test_shutdown_cancels_do_not_interrupt_the_rollback(db, fake_user, fake_ai, monkeypatch):
+    """At shutdown uvicorn cancels open streams after its graceful timeout and
+    asyncio.run cancels whatever still runs: a second cancel while the
+    rollback is under way must not cut it off."""
+    import asyncio
+
+    from redream_api.db.repositories.chat_message_repo import ChatMessageRepo
+
+    async def frames():
+        yield _content("You turn ")
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(fake_ai, "chat_stream", lambda payload: frames())
+    chats_routes, chat_id, setup = await _make_setup(db, fake_user, fake_ai)
+    deleting = asyncio.Event()
+    real_delete = ChatMessageRepo.delete
+
+    async def slow_delete(self, message):
+        deleting.set()
+        await asyncio.sleep(0.2)
+        await real_delete(self, message)
+
+    monkeypatch.setattr(ChatMessageRepo, "delete", slow_delete)
+    content_sent = asyncio.Event()
+
+    async def respond():
+        async for frame in chats_routes._stream_ai_turn(db, fake_ai, fake_user, setup):
+            if "content" in frame:
+                content_sent.set()
+
+    task = asyncio.create_task(respond())
+    await content_sent.wait()
+    task.cancel()  # uvicorn: graceful shutdown timeout exceeded
+    await deleting.wait()
+    task.cancel()  # asyncio.run: cancel everything still running
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert await ChatMessageRepo(db).list_for_chat(chat_id) == []
+
+
+async def test_a_hanging_rollback_gives_up_after_its_timeout(db, fake_user, fake_ai, monkeypatch):
+    import asyncio
+
+    from redream_api.db.repositories.chat_message_repo import ChatMessageRepo
+
+    async def frames():
+        yield _content("You turn ")
+        await asyncio.Event().wait()
+
+    async def stuck_delete(self, message):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(fake_ai, "chat_stream", lambda payload: frames())
+    chats_routes, _, setup = await _make_setup(db, fake_user, fake_ai)
+    monkeypatch.setattr(ChatMessageRepo, "delete", stuck_delete)
+    monkeypatch.setattr(chats_routes, "_ROLLBACK_TIMEOUT_SECONDS", 0.2)
+    content_sent = asyncio.Event()
+
+    async def respond():
+        async for frame in chats_routes._stream_ai_turn(db, fake_ai, fake_user, setup):
+            if "content" in frame:
+                content_sent.set()
+
+    task = asyncio.create_task(respond())
+    await content_sent.wait()
+    task.cancel()
+    done, _ = await asyncio.wait({task}, timeout=2)
+    assert task in done and task.cancelled()
 
 
 async def test_disconnect_closes_the_ai_stream(db, fake_user, fake_ai, monkeypatch):

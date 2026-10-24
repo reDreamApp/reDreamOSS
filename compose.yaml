@@ -74,7 +74,8 @@ services:
     # A real PID 1 (tini): signals reach uvicorn, zombies are reaped.
     init: true
     # Time for a running chat turn to finish on a stop or update before the
-    # container is killed (Docker's default is 10 s).
+    # container is killed (Docker's default is 10 s). Keep it above the
+    # server's --timeout-graceful-shutdown (20 s, apps/server/Dockerfile).
     stop_grace_period: 30s
     depends_on:
       db:

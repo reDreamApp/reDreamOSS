@@ -7,8 +7,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from ....core.request_model import RequestModel
 
-class ChatStartRequest(BaseModel):
+
+class ChatStartRequest(RequestModel):
     language: str = Field(default="en", pattern="^(en|de)$")
 
 
@@ -37,11 +39,11 @@ class ChatMessageOut(BaseModel):
     created_at: datetime
 
 
-class ChatMessageRequest(BaseModel):
+class ChatMessageRequest(RequestModel):
     content: str = Field(min_length=1, max_length=10_000)
 
 
-class ChatIntensityRequest(BaseModel):
+class ChatIntensityRequest(RequestModel):
     intensity: int = Field(ge=0, le=10)
 
 

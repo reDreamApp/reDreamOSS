@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from ....core.request_model import RequestModel
+
 
 class ProfileOut(BaseModel):
     gender: str | None = None
@@ -11,11 +13,11 @@ class ProfileOut(BaseModel):
     nightmare_frequency: str | None = None
 
 
-class ProfileUpdate(BaseModel):
+class ProfileUpdate(RequestModel):
     gender: str | None = None
     age_range: str | None = None
     nightmare_frequency: str | None = None
 
 
-class NightmareFrequencyUpdate(BaseModel):
+class NightmareFrequencyUpdate(RequestModel):
     nightmare_frequency: str

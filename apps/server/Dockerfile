@@ -50,4 +50,7 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 # 127.0.0.1-only port). Addresses or CIDRs, comma-separated; never "*", with
 # which uvicorn takes the leftmost entry, the one a client writes itself.
 # Quoted, so the shell neither splits nor globs it.
-CMD ["sh", "-c", "python -m redream_api.db.migrate && exec uvicorn redream_api.main:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-127.0.0.1}\""]
+# On a stop, open chat streams get 20 s to finish; then they are cancelled
+# and roll back their unanswered message, within compose's stop_grace_period
+# (30 s). Without the limit uvicorn waits on them until Docker kills it.
+CMD ["sh", "-c", "python -m redream_api.db.migrate && exec uvicorn redream_api.main:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-127.0.0.1}\" --timeout-graceful-shutdown 20"]

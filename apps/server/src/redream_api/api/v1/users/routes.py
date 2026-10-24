@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....core import consent
 from ....core.dependencies import get_current_user, get_db
+from ....core.request_model import RequestModel
 from ....db.models.user import User
 from ....db.repositories.consent_repo import ConsentRepo
 from ....db.repositories.user_repo import UserRepo
@@ -36,7 +37,7 @@ class ConsentStatusOut(BaseModel):
     feature: no grant yet, withdrawn, or the consent text changed."""
 
 
-class ConsentGrantRequest(BaseModel):
+class ConsentGrantRequest(RequestModel):
     text_version: str | None = None
     """Version bundled in the client, rather than echoed from server status."""
     version: str

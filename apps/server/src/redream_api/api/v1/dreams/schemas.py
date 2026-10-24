@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from ....core.request_model import RequestModel
+
 REHEARSAL_OUTPUT_FIELDS = (
     "rehearsal_audio_url",
     "rehearsal_script",
@@ -28,7 +30,7 @@ def _reject_rehearsal_fields(values: object) -> object:
     return values
 
 
-class DreamCreate(BaseModel):
+class DreamCreate(RequestModel):
     title: str
     original_dream: str
     rewritten_dream: str | None = None
@@ -48,7 +50,7 @@ class DreamCreate(BaseModel):
         return _reject_rehearsal_fields(v)
 
 
-class DreamUpdate(BaseModel):
+class DreamUpdate(RequestModel):
     title: str | None = None
     original_dream: str | None = None
     rewritten_dream: str | None = None
@@ -84,5 +86,5 @@ class DreamOut(BaseModel):
     rehearsal_generated_at: datetime | None = None
 
 
-class RehearsalGenerateRequest(BaseModel):
+class RehearsalGenerateRequest(RequestModel):
     language: str = Field(pattern="^(en|de)$")

@@ -17,6 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .api.router import router_v1
+from .api.v1.chats.routes import wait_for_open_streams
 from .core import passwords
 from .core.config import legacy_setting_names
 from .core.logging import configure_logging
@@ -25,6 +26,10 @@ from .services.ai_client import get_ai_client
 
 configure_logging()
 log = logging.getLogger(__name__)
+
+# Within compose's stop_grace_period (30 s) after uvicorn's
+# --timeout-graceful-shutdown (20 s).
+_SHUTDOWN_STREAM_WAIT_SECONDS = 8
 
 
 @asynccontextmanager
@@ -44,6 +49,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # The dummy hash unknown-email logins verify against (core/passwords).
     await passwords.prepare_dummy_hash()
     yield
+    # Chat streams that uvicorn just cancelled roll back their unanswered
+    # message; uvicorn ends the process right after this returns.
+    await wait_for_open_streams(_SHUTDOWN_STREAM_WAIT_SECONDS)
 
 
 app = FastAPI(

@@ -6,13 +6,15 @@ from datetime import date
 
 from pydantic import BaseModel
 
+from ....core.request_model import RequestModel
+
 
 class DailyMoodOut(BaseModel):
     mood_date: date
     emotion: str
 
 
-class DailyMoodUpdate(BaseModel):
+class DailyMoodUpdate(RequestModel):
     emotion: str
 
 

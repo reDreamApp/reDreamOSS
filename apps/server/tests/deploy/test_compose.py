@@ -13,6 +13,7 @@ import pytest
 from starlette.requests import Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from redream_api import main
 from redream_api.core import limits
 
 from .conftest import REPO_ROOT, SERVER_DIR
@@ -177,3 +178,16 @@ def test_dockerfile_cmd_trusts_proxy_headers_from_forwarded_allow_ips() -> None:
     assert cmd.index("redream_api.db.migrate") < cmd.index("exec uvicorn")
     assert "--workers 1" in cmd
     assert "--no-access-log" in cmd
+
+
+def test_open_streams_are_cancelled_before_docker_kills_the_server(compose: dict) -> None:
+    """uvicorn's graceful-shutdown limit lies inside compose's stop grace
+    period, so open chat streams are cancelled (and roll back) before SIGKILL."""
+    dockerfile = (SERVER_DIR / "Dockerfile").read_text()
+    cmd = next(line for line in dockerfile.splitlines() if line.startswith("CMD "))
+    match = re.search(r"--timeout-graceful-shutdown (\d+)", cmd)
+    assert match, "uvicorn would wait on open streams until Docker kills it"
+    grace = compose["services"]["server"]["stop_grace_period"]
+    assert grace.endswith("s")
+    # Then the app's shutdown waits for the cancelled streams' cleanup.
+    assert int(match.group(1)) + main._SHUTDOWN_STREAM_WAIT_SECONDS < int(grace.removesuffix("s"))

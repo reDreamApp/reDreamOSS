@@ -23,11 +23,12 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -533,6 +534,43 @@ async def send_message(
 # ---------------------------------------------------------------------------
 
 _SSE_DONE = "data: [DONE]\n\n"
+# Upper bound for the cleanup after a client disconnect.
+_ROLLBACK_TIMEOUT_SECONDS = 8
+# Chat streams that have not finished yet. On a stop uvicorn cancels open
+# responses after --timeout-graceful-shutdown, runs the app's shutdown and
+# then re-raises SIGTERM, which ends the process before a cancelled stream
+# gets to roll back: the shutdown (main.lifespan) waits for these first.
+_open_streams: set[asyncio.Future[None]] = set()
+
+
+async def wait_for_open_streams(limit_seconds: float) -> None:
+    """Wait until every open chat stream has finished, its cleanup included."""
+    if _open_streams:
+        await asyncio.wait(set(_open_streams), timeout=limit_seconds)
+
+
+async def _finish_despite_cancel(cleanup: Coroutine[Any, Any, None], limit_seconds: float) -> None:
+    """Run `cleanup` to its end inside a task that is being cancelled.
+
+    On a disconnect Starlette cancels the response's anyio scope, which
+    re-cancels every await in it (the shield stops that); at shutdown uvicorn
+    and then asyncio.run cancel the task natively (waited out here: asyncio.run
+    lets cancelled tasks finish). Gives up after `limit_seconds`."""
+    with anyio.CancelScope(shield=True):
+        task = asyncio.ensure_future(cleanup)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + limit_seconds
+        while not task.done():
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                task.cancel()
+                log.error("disconnect cleanup did not finish within %ss", limit_seconds)
+                # Let it unwind before the request's session is closed under it.
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait({task}, timeout=1)
+                return
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait({task}, timeout=remaining)
 
 
 def _sse(payload: dict[str, Any]) -> str:
@@ -564,91 +602,99 @@ async def _stream_ai_turn(
         except Exception:
             log.exception("failed to roll back user message for chat %s", chat_id)
 
-    final: dict[str, Any] | None = None
+    # Registered until the generator has finished, cleanup included: the
+    # app's shutdown waits for it (wait_for_open_streams).
+    closed = asyncio.get_running_loop().create_future()
+    _open_streams.add(closed)
     try:
-        yield _sse({"user_message": _to_message_out(setup.user_msg).model_dump(mode="json")})
+        final: dict[str, Any] | None = None
+        try:
+            yield _sse({"user_message": _to_message_out(setup.user_msg).model_dump(mode="json")})
 
-        if setup.safety_payload is not None:
-            yield _sse({"safety_event": setup.safety_payload.model_dump(mode="json")})
-            yield _SSE_DONE
-            return
+            if setup.safety_payload is not None:
+                yield _sse({"safety_event": setup.safety_payload.model_dump(mode="json")})
+                yield _SSE_DONE
+                return
 
-        # aclosing: a disconnect closes the AI stream (and the provider
-        # response under it) right away, not whenever GC gets to it.
-        async with contextlib.aclosing(
-            ai.chat_stream(
-                _ai_chat_payload(chat, setup.history_msgs, language_switched=setup.switch_note)
+            # aclosing: a disconnect closes the AI stream (and the provider
+            # response under it) right away, not whenever GC gets to it.
+            async with contextlib.aclosing(
+                ai.chat_stream(
+                    _ai_chat_payload(chat, setup.history_msgs, language_switched=setup.switch_note)
+                )
+            ) as frames:
+                async for frame in frames:
+                    body = frame.removeprefix("data:").strip()
+                    if body == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(body)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(data, dict):
+                        continue
+                    if "error" in data:
+                        raise AIServiceError(str(data["error"]))
+                    if isinstance(data.get("final"), dict):
+                        final = data["final"]
+                    elif "content" in data:
+                        yield f"data: {body}\n\n"
+                    # anything else (e.g. the clinical safety frame) is internal — the
+                    # non-streaming route doesn't surface it to the client either
+            if final is None:
+                raise AIServiceError("AI stream ended without a final frame")
+            finalize_started = True
+            ai_msg = await _finalize_ai_turn(
+                db=db,
+                user=user,
+                chat=chat,
+                history_msgs=setup.history_msgs,
+                ai_resp=final,
             )
-        ) as frames:
-            async for frame in frames:
-                body = frame.removeprefix("data:").strip()
-                if body == "[DONE]":
-                    break
-                try:
-                    data = json.loads(body)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(data, dict):
-                    continue
-                if "error" in data:
-                    raise AIServiceError(str(data["error"]))
-                if isinstance(data.get("final"), dict):
-                    final = data["final"]
-                elif "content" in data:
-                    yield f"data: {body}\n\n"
-                # anything else (e.g. the clinical safety frame) is internal — the
-                # non-streaming route doesn't surface it to the client either
-        if final is None:
-            raise AIServiceError("AI stream ended without a final frame")
-        finalize_started = True
-        ai_msg = await _finalize_ai_turn(
-            db=db,
-            user=user,
-            chat=chat,
-            history_msgs=setup.history_msgs,
-            ai_resp=final,
-        )
-        yield _sse(
-            {
-                "done": {
-                    "chat_id": chat.id,
-                    "ai_message": _to_message_out(ai_msg).model_dump(mode="json"),
-                    "stage": chat.current_stage,
-                    "is_done": chat.is_done,
+            yield _sse(
+                {
+                    "done": {
+                        "chat_id": chat.id,
+                        "ai_message": _to_message_out(ai_msg).model_dump(mode="json"),
+                        "stage": chat.current_stage,
+                        "is_done": chat.is_done,
+                    }
                 }
-            }
-        )
-    except (asyncio.CancelledError, GeneratorExit):
-        # Client disconnected / abandoned the turn mid-stream (chat switch,
-        # app kill, network loss). These are BaseExceptions — an
-        # `except Exception` never sees them. No frames can be emitted; the
-        # only question is DB state: before finalize, remove the user message
-        # so the orphan is never replayed into the next turn's history; once
-        # finalize has begun, keep whatever committed (the client's refetch
-        # shows the completed turn). The high-risk safety path never rolls
-        # back: the flagged message is the turn the helpline answered
-        # (ADR 0005) and must survive a disconnect.
-        if setup.safety_payload is None and not finalize_started:
-            await _rollback_user_msg()
-        raise
-    except Exception as exc:
-        # Headers are already sent — surface the failure as an error frame.
-        log.exception("mid-stream failure in /chats/%s/message/stream", chat_id)
-        if finalize_started:
-            # _finalize_ai_turn commits step by step: the AI message (and
-            # possibly the stage advance) may already be persisted. Deleting
-            # the user message now would orphan the REPLY — keep both rows,
-            # exactly like the non-streaming route's 500 on the same failure.
-            try:
-                await db.rollback()  # un-poison the session; keep committed rows
-            except Exception:
-                log.exception("session rollback failed for chat %s", chat_id)
-        else:
-            # AI stream failed before anything beyond the user message was
-            # written — same rollback as the non-streaming 502 path.
-            await _rollback_user_msg()
-        yield _sse({"error": str(exc)})
-    yield _SSE_DONE
+            )
+        except (asyncio.CancelledError, GeneratorExit):
+            # Client disconnected / abandoned the turn mid-stream (chat switch,
+            # app kill, network loss). These are BaseExceptions — an
+            # `except Exception` never sees them. No frames can be emitted; the
+            # only question is DB state: before finalize, remove the user message
+            # so the orphan is never replayed into the next turn's history; once
+            # finalize has begun, keep whatever committed (the client's refetch
+            # shows the completed turn). The high-risk safety path never rolls
+            # back: the flagged message is the turn the helpline answered
+            # (ADR 0005) and must survive a disconnect.
+            if setup.safety_payload is None and not finalize_started:
+                await _finish_despite_cancel(_rollback_user_msg(), _ROLLBACK_TIMEOUT_SECONDS)
+            raise
+        except Exception as exc:
+            # Headers are already sent — surface the failure as an error frame.
+            log.exception("mid-stream failure in /chats/%s/message/stream", chat_id)
+            if finalize_started:
+                # _finalize_ai_turn commits step by step: the AI message (and
+                # possibly the stage advance) may already be persisted. Deleting
+                # the user message now would orphan the REPLY — keep both rows,
+                # exactly like the non-streaming route's 500 on the same failure.
+                try:
+                    await db.rollback()  # un-poison the session; keep committed rows
+                except Exception:
+                    log.exception("session rollback failed for chat %s", chat_id)
+            else:
+                # AI stream failed before anything beyond the user message was
+                # written — same rollback as the non-streaming 502 path.
+                await _rollback_user_msg()
+            yield _sse({"error": str(exc)})
+        yield _SSE_DONE
+    finally:
+        _open_streams.discard(closed)
+        closed.set_result(None)
 
 
 @router.post("/{chat_id}/message/stream", dependencies=[Depends(require_consent)])
