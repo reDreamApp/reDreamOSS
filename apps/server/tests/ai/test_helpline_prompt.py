@@ -1,9 +1,9 @@
-"""HELPLINE_PROMPT_EN / HELPLINE_PROMPT_DE and the shared intro turn.
+"""HELPLINE_PROMPT_EN / HELPLINE_PROMPT_DE and the reply input of both paths.
 
 Pins the neutral defaults and their startup checks, that the reference is put
 into the scope boundary when a prompt is built (not at import) on both the
 plain and the streaming response path, that no country's crisis numbers are
-left in the prompts, and that both paths open the history with the same intro.
+left in the prompts, and that both paths give the reply model the same turns.
 """
 
 from __future__ import annotations
@@ -26,8 +26,6 @@ from redream_ai.core import prompts as prompts_mod
 from redream_ai.core.models import ChatInput, Conversation
 from redream_ai.core.prompts import (
     HELPLINE_REFERENCE,
-    INTRO_MESSAGE_DE,
-    INTRO_MESSAGE_EN,
     SCOPE_BOUNDARY_DE,
     SCOPE_BOUNDARY_EN,
 )
@@ -63,7 +61,9 @@ async def _stream_system_prompt(monkeypatch, lang: str) -> str:
     stub = _CaptureAgent()
     monkeypatch.setattr(irt_app, "response_agent", stub)
     conv = Conversation(session_id="s", language=lang)
-    _ = [item async for item in irt_app.get_response_stream_async("recording", "p", conv, lang)]
+    _ = [item async for item in irt_app.get_response_stream_async(
+        "recording", [{"role": "user", "content": "p"}], conv, lang
+    )]
     return str(stub.calls[0]["system_prompt"])
 
 
@@ -180,28 +180,14 @@ def test_no_german_crisis_line_anywhere_in_src():
         assert "telefonseelsorge" not in text, path
 
 
-# --- the intro turn -------------------------------------------------------------
+# --- the reply input -----------------------------------------------------------
 
 
-_EFFECT_WORDS = ("positive", "empowering", "work through", "bewältigen", "positivere")
-
-
-@pytest.mark.parametrize("intro", [INTRO_MESSAGE_EN, INTRO_MESSAGE_DE], ids=["en", "de"])
-def test_intro_shape_and_wording(intro):
-    assert intro.startswith("AI: ")
-    # The separator is a literal backslash-n (as the history string has always had).
-    assert intro.count("\\n") == 1
-    assert "\n" not in intro
-    for word in _EFFECT_WORDS:
-        assert word not in intro.lower()
-
-
-@pytest.mark.parametrize(
-    ("lang", "intro"), [("en", INTRO_MESSAGE_EN), ("de", INTRO_MESSAGE_DE)], ids=["en", "de"]
-)
-async def test_intro_is_the_same_on_both_paths(monkeypatch, lang, intro):
-    """process_chat_message_stream and get_response_async open the history
-    with the same intro turn."""
+@pytest.mark.parametrize("lang", ["en", "de"])
+async def test_both_paths_send_the_chat_as_turns_without_an_intro(monkeypatch, lang):
+    """process_chat_message_stream and get_response_async give the reply model
+    the same input: the chat as user/assistant turns, with no made-up opening
+    turn (the app's greeting is display-only; the boundary names it)."""
     stub = _CaptureAgent()
     monkeypatch.setattr(irt_app, "response_agent", stub)
 
@@ -220,6 +206,4 @@ async def test_intro_is_the_same_on_both_paths(monkeypatch, lang, intro):
     await irt_app.get_response_async("final", "I was chased.", plain_conv)
     plain_prompt = stub.calls[1]["prompt"]
 
-    opening = "\n\nConversation history:\n" + intro + "\\n" + "User: I was chased."
-    assert stream_prompt == opening
-    assert plain_prompt == opening
+    assert stream_prompt == plain_prompt == [{"role": "user", "content": "I was chased."}]

@@ -146,7 +146,7 @@ async def test_real_generator_emits_usage_frame_folded_into_final(agents, monkey
         conversation.stages.append("recording")  # the real router appends before generating
         return "recording"
 
-    async def fake_response_stream(stage, full_prompt, conversation, language,
+    async def fake_response_stream(stage, turns, conversation, language,
                                    safety_constraint=None):
         yield "Tell me ", None
         yield "more.", None

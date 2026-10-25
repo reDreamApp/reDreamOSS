@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from redream_ai.clinical_safety import critic
 from redream_ai.core import irt_app
 from redream_ai.core.agent import LogprobsResult, TokenLogprob
 from redream_ai.core.models import Conversation
 from redream_ai.core.prompts import (
-    ROUTING_PROMPT,
+    ROUTING_PROMPTS,
+    SUMMARY_REQUEST_DE,
+    SUMMARY_REQUEST_EN,
     SYSTEM_PROMPT_TEMPLATES_DE,
     SYSTEM_PROMPT_TEMPLATES_EN,
 )
@@ -29,11 +33,14 @@ def test_de_en_template_parity():
     assert set(SYSTEM_PROMPT_TEMPLATES_EN) == _STAGE_KEYS
 
 
-def test_routing_prompt_excludes_rehearsal_value():
-    # 'rehearsal' appears only in the therapy name, never as a routed stage value.
-    assert ROUTING_PROMPT.lower().count("rehearsal") == 1
-    values_line = ROUTING_PROMPT.split("these values:", 1)[1].split("\n", 1)[0]
-    assert "rehearsal" not in values_line.lower()
+def test_routing_checks_cover_the_routed_steps():
+    # One yes/no question per step that can move on; final has none, and the
+    # router hears no rehearsal step and no therapy name.
+    assert set(ROUTING_PROMPTS) == {"recording", "rewriting", "summary"}
+    for prompt in ROUTING_PROMPTS.values():
+        assert prompt.endswith("Answer only YES or NO.")
+        assert "rehearsal" not in prompt.lower()
+        assert "therap" not in prompt.lower()
 
 
 def test_summary_last_line_exact():
@@ -78,32 +85,15 @@ def test_logprobs_confidence_semantics():
 # --- stage routing logic (stubbed router, no network) --------------------------
 
 class _StubAgent:
-    def __init__(self, stage_str):
-        self._stage = stage_str
+    """Routing agent stub: answers every step check with `answer`."""
 
-    async def generate(self, prompt, **kwargs):
-        return self._stage, {"input": 1, "output": 1, "total": 2}, None
+    def __init__(self, answer):
+        self._answer = answer
+        self.system_prompts = []
 
-
-async def test_first_turn_defaults_to_recording(monkeypatch):
-    # garbage routing output on turn 1 (empty stages) must default to RECORDING, not IndexError
-    monkeypatch.setattr(irt_app, "routing_agent", _StubAgent("not-a-real-stage"))
-    conv = Conversation(session_id="s", language="en")
-    assert await irt_app.determine_stage_async("hi", conv) == "recording"
-
-
-async def test_rehearsal_is_remapped_to_final(monkeypatch):
-    monkeypatch.setattr(irt_app, "routing_agent", _StubAgent("rehearsal"))
-    conv = Conversation(session_id="s", language="en", stages=["recording", "rewriting", "summary"])
-    # rehearsal is not routed in the app build → final (summary already present)
-    assert await irt_app.determine_stage_async("no questions", conv) == "final"
-
-
-async def test_final_requires_summary_first(monkeypatch):
-    monkeypatch.setattr(irt_app, "routing_agent", _StubAgent("final"))
-    conv = Conversation(session_id="s", language="en", stages=["recording", "rewriting"])
-    # no summary yet → guard redirects to summary
-    assert await irt_app.determine_stage_async("done", conv) == "summary"
+    async def generate(self, prompt, system_prompt=None, **kwargs):
+        self.system_prompts.append(system_prompt)
+        return self._answer, {"input": 1, "output": 1, "total": 2}, None
 
 
 def _conversation(*, user_messages: int, stages: list[str]) -> Conversation:
@@ -113,41 +103,139 @@ def _conversation(*, user_messages: int, stages: list[str]) -> Conversation:
     return conv
 
 
-async def test_rewriting_cannot_start_on_the_first_message(monkeypatch):
-    monkeypatch.setattr(irt_app, "routing_agent", _StubAgent("rewriting"))
+async def test_the_first_message_stays_in_recording_without_a_check(monkeypatch):
+    router = _StubAgent("YES")
+    monkeypatch.setattr(irt_app, "routing_agent", router)
     conv = _conversation(user_messages=1, stages=[])
     # a dream plus "let's rewrite it" in one message still gets one recording reply
     assert await irt_app.determine_stage_async("dream, rewrite now", conv) == "recording"
+    assert router.system_prompts == []
 
 
-async def test_rewriting_starts_from_the_second_message(monkeypatch):
-    monkeypatch.setattr(irt_app, "routing_agent", _StubAgent("rewriting"))
-    conv = _conversation(user_messages=2, stages=["recording"])
-    assert await irt_app.determine_stage_async("yes", conv) == "rewriting"
+@pytest.mark.parametrize(
+    ("current", "answer", "expected"),
+    [
+        ("recording", "YES", "rewriting"),
+        ("recording", "NO", "recording"),
+        ("rewriting", "YES", "summary"),
+        ("rewriting", "no.", "rewriting"),
+        ("summary", "Yes", "final"),
+        ("summary", "NO", "summary"),
+        ("recording", "maybe", "recording"),  # anything but YES stays
+        ("rewriting", "", "rewriting"),
+    ],
+)
+async def test_each_step_asks_its_own_question(monkeypatch, current, answer, expected):
+    router = _StubAgent(answer)
+    monkeypatch.setattr(irt_app, "routing_agent", router)
+    stages = {"recording": ["recording"], "rewriting": ["recording", "rewriting"],
+              "summary": ["recording", "rewriting", "summary"]}[current]
+    conv = _conversation(user_messages=len(stages) + 1, stages=stages)
+    assert await irt_app.determine_stage_async("…", conv) == expected
+    assert router.system_prompts == [ROUTING_PROMPTS[current]]
 
 
-async def test_summary_requires_a_rewriting_turn(monkeypatch):
-    monkeypatch.setattr(irt_app, "routing_agent", _StubAgent("summary"))
+async def test_final_stays_final_without_a_check(monkeypatch):
+    router = _StubAgent("NO")
+    monkeypatch.setattr(irt_app, "routing_agent", router)
+    for last in ("final", "rehearsal"):  # rehearsal: website build only
+        conv = _conversation(user_messages=5, stages=["recording", "rewriting", "summary", last])
+        assert await irt_app.determine_stage_async("thanks", conv) == "final"
+    assert router.system_prompts == []
+
+
+async def test_a_pre_port_intensity_turn_counts_as_rewriting(monkeypatch):
+    router = _StubAgent("NO")
+    monkeypatch.setattr(irt_app, "routing_agent", router)
+    conv = _conversation(user_messages=3, stages=["recording", "intensity"])
+    assert await irt_app.determine_stage_async("ok", conv) == "rewriting"
+    assert router.system_prompts == [ROUTING_PROMPTS["rewriting"]]
+
+
+def test_the_order_guard_still_holds():
+    """_keep_stage_order stays the last word, whatever the router says."""
     conv = _conversation(user_messages=3, stages=["recording", "recording"])
-    assert await irt_app.determine_stage_async("summarize", conv) == "rewriting"
-
-
-async def test_no_stage_is_skipped_on_the_first_message(monkeypatch):
-    monkeypatch.setattr(irt_app, "routing_agent", _StubAgent("final"))
+    assert irt_app._keep_stage_order(irt_app.Stage.FINAL, conv) == irt_app.Stage.REWRITING
+    conv = _conversation(user_messages=4, stages=["recording", "rewriting"])
+    assert irt_app._keep_stage_order(irt_app.Stage.RECORDING, conv) == irt_app.Stage.REWRITING
     conv = _conversation(user_messages=1, stages=[])
-    # final -> summary -> rewriting -> recording: every guard applies in turn
-    assert await irt_app.determine_stage_async("done", conv) == "recording"
+    assert irt_app._keep_stage_order(irt_app.Stage.FINAL, conv) == irt_app.Stage.RECORDING
 
 
-async def test_a_session_never_goes_back_to_recording(monkeypatch):
-    monkeypatch.setattr(irt_app, "routing_agent", _StubAgent("recording"))
-    conv = _conversation(user_messages=4, stages=["recording", "recording", "rewriting"])
-    assert await irt_app.determine_stage_async("I forgot a part", conv) == "rewriting"
-    conv = _conversation(user_messages=6, stages=["recording", "rewriting", "summary"])
-    assert await irt_app.determine_stage_async("hm", conv) == "summary"
+# --- what the models are sent (2026-10-25 restructure) -----------------------------
+
+class _RecordingAgent:
+    def __init__(self, reply):
+        self.reply = reply
+        self.calls = []
+
+    async def generate(self, prompt, system_prompt=None, **kwargs):
+        self.calls.append({"prompt": prompt, "system_prompt": system_prompt})
+        return self.reply, {"input": 1, "output": 1, "total": 2}, None
 
 
-async def test_recording_continues_while_the_router_says_so(monkeypatch):
-    monkeypatch.setattr(irt_app, "routing_agent", _StubAgent("recording"))
-    conv = _conversation(user_messages=3, stages=["recording", "recording"])
-    assert await irt_app.determine_stage_async("and then I fell", conv) == "recording"
+async def test_the_router_reads_the_whole_conversation(monkeypatch):
+    router = _RecordingAgent("YES")
+    monkeypatch.setattr(irt_app, "routing_agent", router)
+    conv = Conversation(session_id="s", language="en")
+    conv.add_message("A wolf chases me.", "user")
+    conv.add_message("Would you like to start rewriting it now?", "assistant", "recording")
+    conv.add_message("Yes", "user")
+    conv.stages = ["recording"]
+
+    assert await irt_app.determine_stage_async("Yes", conv) == "rewriting"
+
+    assert router.calls[0]["system_prompt"] == ROUTING_PROMPTS["recording"]
+    assert router.calls[0]["prompt"] == (
+        "<conversation>\nUser: A wolf chases me.\n"
+        "Assistant: Would you like to start rewriting it now?\nUser: Yes\n</conversation>"
+    )
+
+
+async def test_the_reply_model_gets_the_chat_as_turns(monkeypatch):
+    responder = _RecordingAgent("ok")
+    monkeypatch.setattr(irt_app, "response_agent", responder)
+    conv = Conversation(session_id="s", language="en")
+    conv.add_message("I want to die.", "user")  # answered by the helpline only
+    conv.add_message("A wolf chases me.", "user")
+    conv.add_message("That sounds frightening. How does it end?", "assistant", "recording")
+    conv.add_message("It catches me.", "user")
+
+    await irt_app.get_response_async("recording", "It catches me.", conv)
+
+    assert responder.calls[0]["prompt"] == [
+        {"role": "user", "content": "I want to die.\n\nA wolf chases me."},
+        {"role": "assistant", "content": "That sounds frightening. How does it end?"},
+        {"role": "user", "content": "It catches me."},
+    ]
+
+
+def test_turns_start_with_the_user():
+    conv = Conversation(session_id="s", language="de")
+    conv.add_message("Hallo!", "assistant")
+    conv.add_message("Hi", "user")
+    assert conv.history_as_turns() == [{"role": "user", "content": "Hi"}]
+
+
+@pytest.mark.parametrize(
+    ("lang", "request_text"),
+    [("en", SUMMARY_REQUEST_EN), ("de", SUMMARY_REQUEST_DE)],
+)
+async def test_the_summary_reads_the_chat_as_one_document(monkeypatch, lang, request_text):
+    """As chat turns the model went on talking instead of writing the summary."""
+    responder = _RecordingAgent("Title: ...")
+    monkeypatch.setattr(irt_app, "response_agent", responder)
+    conv = Conversation(session_id="s", language=lang)
+    conv.add_message("A wolf chases me.", "user")
+    conv.add_message("Shall I write the summary?", "assistant", "rewriting")
+    conv.add_message("Yes", "user")
+
+    await irt_app.get_response_async("summary", "Yes", conv)
+
+    assert responder.calls[0]["prompt"] == [
+        {
+            "role": "user",
+            "content": "<conversation>\nUser: A wolf chases me.\n"
+            "Assistant: Shall I write the summary?\nUser: Yes\n</conversation>\n\n" + request_text,
+        }
+    ]

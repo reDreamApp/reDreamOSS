@@ -23,7 +23,6 @@ from redream_ai.clinical_safety.classifier import ClinicalClassifier
 from redream_ai.clinical_safety.critic import SafetyCritic
 from redream_ai.config import settings
 from redream_ai.core import agent
-from redream_ai.core.prompts import ROUTING_PROMPT
 
 _USAGE = types.SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2)
 
@@ -113,7 +112,7 @@ def test_agents_come_from_the_llm_settings(endpoint, built_clients):
     routing, response = agent.build_agents()
 
     assert routing.model == "small-model"
-    assert routing.system_prompt == ROUTING_PROMPT
+    assert routing.system_prompt == ""  # every call brings its own
     assert routing.temperature == 0.1
     assert response.model == "big-model"
     assert response.temperature == 0.1
@@ -281,6 +280,27 @@ async def test_per_call_system_prompt_override_feeds_primary_and_fallback():
         assert kwargs["messages"][0] == {"role": "system", "content": "PER-CALL OVERRIDE"}
         assert kwargs["messages"][1] == {"role": "user", "content": "user turn"}
     assert llm.system_prompt == "constructor prompt"  # never mutated
+
+
+async def test_a_list_of_turns_follows_the_system_prompt():
+    # The reply model gets the chat as user/assistant turns, not one text.
+    llm = agent.Agent("m-large", "system prompt")
+    captured = {}
+
+    def primary_create(kwargs):
+        captured.update(kwargs)
+        return _fake_response("ok")
+
+    llm.client = _fake_client(primary_create)
+    turns = [
+        {"role": "user", "content": "I was chased."},
+        {"role": "assistant", "content": "Who chased you?"},
+        {"role": "user", "content": "A dog."},
+    ]
+
+    await llm.generate(turns, system_prompt="PER-CALL")
+
+    assert captured["messages"] == [{"role": "system", "content": "PER-CALL"}, *turns]
 
 
 async def test_generate_passes_response_format_through():

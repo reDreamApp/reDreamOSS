@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:redream_app/core/settings/app_settings.dart';
 import 'package:redream_app/core/widgets/brand_logo.dart';
 import 'package:redream_app/core/widgets/theme_mode_toggle.dart';
 import 'package:redream_app/features/chat/chat_actions.dart';
@@ -29,12 +30,14 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   late final ShellTabs _tabs = context.read<ShellTabs>();
+  late final AppSettings _settings = context.read<AppSettings>();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _tabs.addListener(_onTabChanged);
+    _settings.addListener(_onSettingsChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(context.read<JournalState>().load());
@@ -54,10 +57,19 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
   }
 
+  /// A chat nobody has written in yet follows a change of the app language.
+  /// After the frame, so the greeting comes from the new locale.
+  void _onSettingsChanged() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(context.followAppLanguage());
+    });
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _tabs.removeListener(_onTabChanged);
+    _settings.removeListener(_onSettingsChanged);
     super.dispose();
   }
 

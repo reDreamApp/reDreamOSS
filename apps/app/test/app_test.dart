@@ -115,7 +115,11 @@ Future<(Widget, FakeApi, AppSettings)> _app({
     )
     ..on(
       'POST /api/v1/chats/start',
-      (_, _) => {'chat_id': 7, 'language': 'en', 'current_stage': 'recording'},
+      (_, body) => {
+        'chat_id': 7,
+        'language': body['language'],
+        'current_stage': 'recording',
+      },
     )
     ..on(
       'POST /api/v1/chats/{id}/message/stream',
@@ -891,6 +895,29 @@ void main() {
     await _settle(tester);
     expect(find.byType(BrandMark), findsNothing);
     expect(find.byIcon(Icons.menu), findsOneWidget);
+  });
+
+  testWidgets('an untouched chat follows a change of the app language', (
+    tester,
+  ) async {
+    final (app, api, settings) = await _app(auth: FakeAuth(userId: 'user-1'));
+    api.on('DELETE /api/v1/chats/{id}', (_, _) => null);
+    _tallPhone(tester);
+    await tester.pumpWidget(app);
+    await _settle(tester);
+    await tester.tap(find.text('Session'));
+    await _settle(tester);
+    expect(find.text(_en.chatWelcome2), findsOneWidget);
+
+    await settings.setLanguage('de');
+    await _settle(tester);
+
+    expect(api.calls, contains('DELETE /api/v1/chats/7'));
+    expect(
+      api.calls.where((c) => c == 'POST /api/v1/chats/start'),
+      hasLength(2),
+    );
+    expect(find.text(AppLocalizationsDe().chatWelcome2), findsOneWidget);
   });
 
   testWidgets('session tab sends a message and renders the reply', (

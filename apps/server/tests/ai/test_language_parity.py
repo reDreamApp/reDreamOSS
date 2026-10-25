@@ -5,14 +5,13 @@ The app routes recording → rewriting → summary → final ONLY — 'rehearsal
 journal; the 0-10 intensity rating lives on SummaryStructured, not in chat).
 These tests pin: per-routed-stage template presence in both languages, the
 language-selection paths (response, streaming response, nightmare summary),
-the ROUTING_PROMPT's allowed stage vocabulary, and the structured summary
+the routing checks' stage vocabulary, and the structured summary
 extraction for both languages with a fake LLM.
 """
 
 from __future__ import annotations
 
 import json
-import re
 
 import pytest
 
@@ -24,7 +23,7 @@ from redream_ai.core.prompts import (
     HELPLINE_REFERENCE,
     NIGHTMARE_SUMMARY_PROMPT_DE,
     NIGHTMARE_SUMMARY_PROMPT_EN,
-    ROUTING_PROMPT,
+    ROUTING_PROMPTS,
     SYSTEM_PROMPT_TEMPLATES_DE,
     SYSTEM_PROMPT_TEMPLATES_EN,
 )
@@ -65,16 +64,15 @@ def test_routed_stage_has_nonempty_template_in_both_languages(stage):
     assert SYSTEM_PROMPT_TEMPLATES_EN[stage].strip()
 
 
-def test_routing_prompt_allowed_stages_are_exactly_the_routed_flow():
-    # The instruction "respond with exactly one of these values: ..." is the
-    # router's whole output vocabulary. It must be exactly the 4 routed stages —
+def test_routing_checks_move_only_between_routed_stages():
+    # A check exists for each routed step that can move on (final cannot);
     # no rehearsal, no intensity.
-    values_line = ROUTING_PROMPT.split("these values:", 1)[1].split("\n", 1)[0]
-    assert set(re.findall(r"[a-z]+", values_line)) == set(ROUTED_STAGES)
+    assert set(ROUTING_PROMPTS) | {"final"} == set(ROUTED_STAGES)
+    assert set(irt_app._NEXT_STAGE.values()) <= set(ROUTED_STAGES)
 
 
 def test_intensity_is_not_a_routed_stage_anywhere():
-    assert "intensity" not in ROUTING_PROMPT.lower()
+    assert all("intensity" not in p.lower() for p in ROUTING_PROMPTS.values())
     assert "intensity" not in SYSTEM_PROMPT_TEMPLATES_DE
     assert "intensity" not in SYSTEM_PROMPT_TEMPLATES_EN
 
@@ -132,7 +130,9 @@ async def test_stream_prompt_selection_honours_explicit_language(
 
     out = [
         item
-        async for item in irt_app.get_response_stream_async("summary", "full prompt", conv, lang)
+        async for item in irt_app.get_response_stream_async(
+            "summary", [{"role": "user", "content": "hi"}], conv, lang
+        )
     ]
 
     system_prompt = stub.calls[0]["system_prompt"]

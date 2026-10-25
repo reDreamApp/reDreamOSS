@@ -26,7 +26,7 @@ from redream_ai.config import Settings, settings
 from redream_ai.core import agent as core_agent
 from redream_ai.core import irt_app
 from redream_ai.core.models import ChatInput, Conversation
-from redream_ai.core.prompts import REPLAY_CHECK_PROMPT, ROUTING_PROMPT, TALK_GATE_PROMPT
+from redream_ai.core.prompts import REPLAY_CHECK_PROMPT, ROUTING_PROMPTS, TALK_GATE_PROMPT
 from redream_ai.llm.openai_compatible import OpenAICompatibleLlmClient
 from redream_ai.models import Language, SafetyRequest
 
@@ -190,7 +190,7 @@ class _Endpoint:
 
     def role(self, request: dict[str, Any]) -> str:
         system = request["messages"][0]["content"]
-        if system == ROUTING_PROMPT:
+        if system in ROUTING_PROMPTS.values():
             return "routing"
         if system == TALK_GATE_PROMPT:
             return "talk_gate"
@@ -211,7 +211,7 @@ class _Endpoint:
         if kwargs.get("stream"):
             return _Stream(["You turn ", "and face it."])
         reply = {
-            "routing": "rewriting",
+            "routing": "YES",  # the recording step check moves on
             "talk_gate": "DREAM",
             "replay_check": "CHANGED",
             "segmenter": json.dumps(

@@ -26,6 +26,13 @@ extension ChatActions on BuildContext {
     welcomeMessages: _welcome,
   );
 
+  /// Replaces a chat nobody has written in yet when the app's language
+  /// changed (see [ChatState.followAppLanguage]).
+  Future<void> followAppLanguage() => read<ChatState>().followAppLanguage(
+    language: _language,
+    welcomeMessages: _welcome,
+  );
+
   Future<bool> openChat(int id) =>
       read<ChatState>().loadChat(id, welcomeMessages: _welcome);
 

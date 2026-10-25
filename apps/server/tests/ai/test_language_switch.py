@@ -25,6 +25,7 @@ from redream_ai.core.prompts import (
     LANGUAGE_SWITCH_NOTE_DE,
     LANGUAGE_SWITCH_NOTE_EN,
     REWRITING_NOTHING_YET_NOTE_DE,
+    ROUTING_PROMPTS,
     SCOPE_BOUNDARY_DE,
     SCOPE_BOUNDARY_EN,
     SYSTEM_PROMPT_TEMPLATES_DE,
@@ -295,18 +296,18 @@ async def test_the_switch_note_is_added_only_on_the_switch() -> None:
 
 
 class _Turn:
-    """Routing and response agent in one: routes to summary, records the reply prompt."""
+    """Routing and response agent in one: moves on to the summary, records the reply prompt."""
 
     def __init__(self) -> None:
         self.system_prompts: list[str] = []
 
-    async def generate(self, prompt: str, system_prompt: str | None = None, **kwargs: Any) -> Any:
-        if system_prompt is None:
-            return "summary", {}, None  # the router
+    async def generate(self, prompt: Any, system_prompt: str | None = None, **kwargs: Any) -> Any:
+        if system_prompt in ROUTING_PROMPTS.values():
+            return "YES", {}, None  # the step check
         self.system_prompts.append(system_prompt)
         return "Antwort", {"input": 1, "output": 1, "total": 2}, None
 
-    async def generate_stream(self, prompt: str, system_prompt: str | None = None) -> Any:
+    async def generate_stream(self, prompt: Any, system_prompt: str | None = None) -> Any:
         self.system_prompts.append(system_prompt or "")
         yield "Antwort", None, None
         yield "", {"input": 1, "output": 1, "total": 2}, None
@@ -412,20 +413,23 @@ async def test_the_stream_entry_point_passes_the_flag_on(
 
 
 def test_the_language_paragraphs_point_to_writing_in_the_other_language() -> None:
+    # The guide only talks about language when asked, or for a third language:
+    # in the 2026-10-25 screenshot it told a user who wrote "Thank you." that
+    # they could simply write in English.
     assert (
-        "\n\nLanguage: every reply is written in English. If the user asks to speak German, "
-        "say briefly that they can simply write in German and the chat will continue in "
-        "German. If they write in or ask for a language other than English or German, say in "
-        "English that this chat can be held in English or German, and then carry on with "
-        "what else they said.\n\n"
+        "\n- Language: the chat is held in English or German and switches by itself when "
+        "the user writes in the other one. If the user asks for German, say they can simply "
+        "write in German. If they write in or ask for another language, say in English that "
+        "this chat can be held in English or German, and respond to the rest of their "
+        "message. Otherwise say nothing about language.\n"
     ) in SCOPE_BOUNDARY_EN
     assert (
-        "\n\nSprache: Jede Antwort ist auf Deutsch geschrieben. Bittet der Nutzer darum, "
-        "Englisch zu sprechen, sag kurz, dass er einfach auf Englisch schreiben kann und der "
-        "Chat dann auf Englisch weitergeht. Schreibt er in einer anderen Sprache als Deutsch "
-        "oder Englisch oder bittet er um eine solche, sag auf Deutsch, dass dieser Chat auf "
-        "Deutsch oder Englisch geführt werden kann, und geh dann auf das ein, was er sonst "
-        "gesagt hat.\n\n"
+        "\n- Sprache: Der Chat läuft auf Deutsch oder Englisch und wechselt von selbst, wenn "
+        "der Nutzer in der anderen Sprache schreibt. Bittet er um Englisch, sag, dass er "
+        "einfach auf Englisch schreiben kann. Schreibt er in einer anderen Sprache oder "
+        "bittet er um eine, sag auf Deutsch, dass dieser Chat auf Deutsch oder Englisch "
+        "geführt werden kann, und geh auf den Rest seiner Nachricht ein. Sonst sag nichts "
+        "zur Sprache.\n"
     ) in SCOPE_BOUNDARY_DE
     for boundary in (SCOPE_BOUNDARY_EN, SCOPE_BOUNDARY_DE):
         assert "settings" not in boundary and "Einstellungen" not in boundary

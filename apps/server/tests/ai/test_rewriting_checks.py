@@ -15,10 +15,14 @@ import pytest
 from redream_ai.core import irt_app
 from redream_ai.core.models import Conversation
 from redream_ai.core.prompts import (
+    LANGUAGE_SWITCH_NOTE_DE,
+    NEW_VERSION_CHECK_PROMPT,
     RECORDING_ENOUGH_NOTE_DE,
     RECORDING_ENOUGH_NOTE_EN,
     RECORDING_NO_DREAM_YET_NOTE_DE,
     RECORDING_NO_DREAM_YET_NOTE_EN,
+    REPEAT_NOTE_DE,
+    REPEAT_NOTE_EN,
     REPLAY_CHECK_PROMPT,
     REWRITING_ENOUGH_NOTE_DE,
     REWRITING_ENOUGH_NOTE_EN,
@@ -46,11 +50,14 @@ _TALK = {
 
 
 class _Checks:
-    """Stands in for the routing agent: answers both one-word checks."""
+    """Stands in for the routing agent: answers the one-word checks."""
 
-    def __init__(self, changed: str = "CHANGED", fail: bool = False):
+    def __init__(
+        self, changed: str = "CHANGED", fail: bool = False, new_version: str | Exception = "NO"
+    ):
         self.changed = changed
         self.fail = fail
+        self.new_version = new_version
         self.calls: list[str] = []
 
     async def generate(self, prompt, system_prompt=None, **kwargs):
@@ -60,6 +67,11 @@ class _Checks:
             text = prompt.removeprefix("Message: ")
             self.calls.append(f"talk:{text}")
             return ("TALK" if text.lower() in _TALK else "DREAM"), {}, None
+        if system_prompt == NEW_VERSION_CHECK_PROMPT:
+            self.calls.append("new_version")
+            if isinstance(self.new_version, Exception):
+                raise self.new_version
+            return self.new_version, {}, None
         assert system_prompt == REPLAY_CHECK_PROMPT
         self.calls.append("replay")
         return self.changed, {}, None
@@ -71,6 +83,16 @@ def checks(monkeypatch):
     monkeypatch.setattr(irt_app, "routing_agent", agent)
     monkeypatch.setattr(irt_app, "_talk_verdicts", {})
     return agent
+
+
+@pytest.fixture
+def no_repeat_note(monkeypatch):
+    """The counted notes alone; the quote of the last reply has its own tests."""
+
+    async def none(conversation, is_english):
+        return None
+
+    monkeypatch.setattr(irt_app, "_repeat_note", none)
 
 
 def _segment(text: str, node_id: str | None, node_type: str | None):
@@ -214,6 +236,12 @@ def test_a_note_without_a_flag_is_passed_on_as_it_is():
 # --- a user with nothing more to add ---------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _counted_notes_only(request, monkeypatch):
+    if "repeat_note" not in request.node.name:
+        request.getfixturevalue("no_repeat_note")
+
+
 def _note(c: Conversation, stage: str = "rewriting", language: str = "en", flag=None):
     return irt_app._stage_note(stage, flag, c, language)
 
@@ -334,6 +362,7 @@ async def test_the_summary_waits_until_something_was_changed(checks):
 
     assert await irt_app._hold_summary_without_rewrite("summary", c) == ("rewriting", True)
     assert c.stages == ["rewriting", "rewriting"]
+    assert checks.calls[-1] == "new_version"  # the whole chat was read too
     assert (
         await irt_app._stage_note("rewriting", None, c, "en", True) == REWRITING_NOTHING_YET_NOTE_EN
     )
@@ -345,6 +374,32 @@ async def test_the_summary_goes_ahead_with_a_new_version(checks):
 
     assert await irt_app._hold_summary_without_rewrite("summary", c) == ("summary", False)
     assert c.stages == ["rewriting", "summary"]
+
+
+async def test_a_change_given_before_the_rewriting_opener_counts(checks):
+    """2026-10-25 runs: "Yes, let's rewrite it. The engine starts and ..." got the
+    opener, every later "yes" was held back, and the guide asked for the summary
+    seven times in a row."""
+    checks.new_version = "YES"
+    c = _conversation(
+        ("assistant", "Would you like to start rewriting it now?", "recording"),
+        ("user", "Yes. I turn the key and the engine starts, I drive off calm.", None),
+        ("assistant", "Shall I turn it into the summary now?", "rewriting"),
+        ("user", "yes", None),
+    )
+    c.stages = ["recording", "rewriting", "summary"]
+
+    assert await irt_app._hold_summary_without_rewrite("summary", c) == ("summary", False)
+    assert checks.calls[-1] == "new_version"
+
+
+@pytest.mark.parametrize("answer", [RuntimeError("provider down"), "MAYBE", ""])
+async def test_a_failed_new_version_check_holds_the_summary(checks, answer):
+    checks.new_version = answer
+    c = _conversation(_OPENER, ("user", "yes", None))
+    c.stages = ["rewriting", "summary"]
+
+    assert await irt_app._hold_summary_without_rewrite("summary", c) == ("rewriting", True)
 
 
 async def test_a_summary_that_was_already_shown_can_be_repeated(checks):
@@ -360,3 +415,61 @@ async def test_other_stages_are_left_alone(checks):
 
     assert await irt_app._hold_summary_without_rewrite("rewriting", c) == ("rewriting", False)
     assert checks.calls == []
+
+
+async def test_no_opener_note_when_the_new_version_came_earlier(checks):
+    """2026-10-25: a user gave dream and new version in one message; the note
+    told the guide nothing was changed yet, and it asked which moment to change."""
+    checks.new_version = "YES"
+    c = _conversation(
+        ("user", "An exam, my mind is blank. New version: I breathe, answers come.", None),
+        ("assistant", "Would you like to start rewriting it now?", "recording"),
+        ("user", "yes", None),
+    )
+    c.stages = ["recording", "rewriting"]
+    assert await irt_app._stage_note("rewriting", None, c, "en") is None
+    assert checks.calls[-1] == "new_version"
+
+
+# --- the last reply is quoted when the user says nothing new --------------------
+
+
+async def test_the_repeat_note_quotes_the_last_reply(checks):
+    c = _conversation(
+        ("user", "idk", None),
+        ("assistant", "What happens in your dream?", "recording"),
+        ("user", "yes", None),
+    )
+    note = await irt_app._repeat_note(c, True)
+    assert note == REPEAT_NOTE_EN.format(previous="What happens in your dream?")
+    c.stages = ["recording", "recording"]
+    assert (await irt_app._stage_note("recording", None, c, "en")).endswith(note)
+
+
+async def test_no_repeat_note_after_dream_content_or_outside_recording(checks):
+    c = _conversation(
+        ("assistant", "How does it end?", "recording"),
+        ("user", "The wolf leaves.", None),
+    )
+    assert await irt_app._repeat_note(c, True) is None
+    c = _conversation(_OPENER, ("user", "yes", None))
+    c.stages = ["rewriting", "rewriting"]
+    assert REPEAT_NOTE_EN.split("{")[0] not in (
+        await irt_app._stage_note("rewriting", None, c, "en")
+    )
+    c = _conversation(("assistant", "Title: ...", "summary"), ("user", "yes", None))
+    assert await irt_app._stage_note("summary", None, c, "en") is None
+    assert await irt_app._stage_note("final", None, c, "de") is None
+
+
+async def test_the_repeat_note_comes_before_the_switch_note(checks):
+    c = _conversation(
+        ("assistant", "Was passiert in deinem Traum?", "recording"),
+        ("user", "yes", None),
+    )
+    note = await irt_app._stage_note("recording", None, c, "de", False, True)
+    assert note.endswith(
+        REPEAT_NOTE_DE.format(previous="Was passiert in deinem Traum?")
+        + "\n\n"
+        + LANGUAGE_SWITCH_NOTE_DE
+    )

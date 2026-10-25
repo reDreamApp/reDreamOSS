@@ -37,6 +37,25 @@ class Conversation(BaseModel):
             history.append(f"{role}: {msg.content}")
         return "\n".join(history)
 
+    def history_as_turns(self, max_messages: int = 100) -> List[Dict[str, str]]:
+        """Recent history as chat turns for the response model.
+
+        Neighbouring messages of one role are joined (a user message that only
+        got the helpline has no assistant reply after it), and a leading
+        assistant message is dropped: the chat API expects user and assistant
+        to alternate, starting with the user.
+        """
+        turns: List[Dict[str, str]] = []
+        for msg in self.messages[-max_messages:]:
+            role = "user" if msg.role == "user" else "assistant"
+            if not turns and role == "assistant":
+                continue
+            if turns and turns[-1]["role"] == role:
+                turns[-1]["content"] += "\n\n" + msg.content
+            else:
+                turns.append({"role": role, "content": msg.content})
+        return turns
+
 # Regular classes for API
 class ChatInput(BaseModel):
     session_id: str

@@ -42,10 +42,11 @@ ChatSummary _chat(
   bool isDone = false,
   IrtStage stage = IrtStage.recording,
   String? title,
+  String language = 'en',
   DateTime? updatedAt,
 }) => ChatSummary(
   id: id,
-  language: 'en',
+  language: language,
   currentStage: stage,
   isDone: isDone,
   isNightmare: null,
@@ -279,6 +280,26 @@ void main() {
       expect(state.messages.single.content, 'Welcome!');
     });
 
+    test('does not resume an untouched chat in another language', () async {
+      // Started while the app was German, then the user switched to English
+      // (2026-10-25: the greeting was English, the guide answered German).
+      service.chatList = [_chat(7, language: 'de')];
+      await resume();
+      expect(service.deletedIds, [7]);
+      expect(state.chatId, 1);
+      expect(state.messages.single.content, 'Welcome!');
+    });
+
+    test('resumes a chat in another language once it has messages', () async {
+      service.chatList = [_chat(7, language: 'de', title: 'Mein Traum')];
+      service.messagesByChat[7] = [
+        service.serverMessage('user', 'Mein Traum', stage: 'recording'),
+      ];
+      await resume();
+      expect(service.deletedIds, isEmpty);
+      expect(state.chatId, 7);
+    });
+
     test('starts fresh when there are no chats', () async {
       await resume();
       expect(state.chatId, 1);
@@ -296,6 +317,43 @@ void main() {
         expect(state.errorMessage, isNotNull);
       },
     );
+  });
+
+  group('followAppLanguage', () {
+    test('replaces a chat nobody has written in yet', () async {
+      await state.startChat(language: 'de', welcomeMessages: ['Willkommen!']);
+      await state.followAppLanguage(
+        language: 'en',
+        welcomeMessages: ['Welcome!'],
+      );
+      expect(service.deletedIds, [1]);
+      expect(state.chatId, 1);
+      expect(state.messages.single.content, 'Welcome!');
+    });
+
+    test('keeps a chat in the same language', () async {
+      await state.startChat(language: 'en', welcomeMessages: ['Welcome!']);
+      await state.followAppLanguage(
+        language: 'en',
+        welcomeMessages: ['Welcome!'],
+      );
+      expect(service.deletedIds, isEmpty);
+    });
+
+    test('keeps a chat the user has written in', () async {
+      service.chatList = [_chat(5, language: 'de', title: 'Traum')];
+      await state.loadChats();
+      service.messagesByChat[5] = [
+        service.serverMessage('user', 'Traum', stage: 'recording'),
+      ];
+      await state.loadChat(5);
+      await state.followAppLanguage(
+        language: 'en',
+        welcomeMessages: ['Welcome!'],
+      );
+      expect(service.deletedIds, isEmpty);
+      expect(state.chatId, 5);
+    });
   });
 
   group('loadChat', () {

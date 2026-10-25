@@ -1,25 +1,28 @@
 import math
 import asyncio
 import contextlib
-from typing import AsyncGenerator, Tuple, Optional, List
+from typing import AsyncGenerator, Tuple, Optional, List, Union
 from dataclasses import dataclass, field
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
 import logging
 from ..config import LLM_REQUIRED, settings
 from ..llm.chat_request import answer_text, build_chat_request, create_chat_completion
-from .prompts import ROUTING_PROMPT
 # Create a specific logger for prompts
 prompt_logger = logging.getLogger("prompts")
 logger = logging.getLogger(__name__)
 
-def log_prompt(system_prompt: str, user_prompt: str, model: str):
+def log_prompt(system_prompt: str, user_prompt: Union[str, List[dict]], model: str):
     """Sizes only: the prompts carry the chat (health data), which never goes
     to the logs, not even at DEBUG."""
+    if isinstance(user_prompt, list):
+        user_chars = sum(len(turn.get("content") or "") for turn in user_prompt)
+    else:
+        user_chars = len(user_prompt or "")
     prompt_logger.debug(
         "llm.request model=%s system_chars=%d user_chars=%d",
         model,
         len(system_prompt or ""),
-        len(user_prompt or ""),
+        user_chars,
     )
 
 def build_client() -> AsyncOpenAI:
@@ -114,12 +117,12 @@ class Agent:
         — used by the summary structured-extraction pass (ADR 0003).
         """
         effective_system_prompt = system_prompt if system_prompt is not None else self.system_prompt
+        # A list is the conversation as chat turns ({"role", "content"}); a
+        # string is one user message.
+        turns = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
         request_kwargs = build_chat_request(
             model,
-            [
-                {"role": "system", "content": effective_system_prompt},
-                {"role": "user", "content": prompt}
-            ],
+            [{"role": "system", "content": effective_system_prompt}, *turns],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             response_format=response_format,
@@ -152,7 +155,7 @@ class Agent:
 
     async def generate(
         self,
-        prompt: str,
+        prompt: Union[str, List[dict]],
         system_prompt: Optional[str] = None,
         response_format: Optional[dict] = None,
     ) -> Tuple[str, dict, Optional[LogprobsResult]]:
@@ -161,7 +164,8 @@ class Agent:
         model if one is set and the primary fails.
 
         Args:
-            prompt: The user prompt to send
+            prompt: The user prompt to send, or the conversation as a list of
+                {"role": "user" | "assistant", "content": ...} turns
             system_prompt: Per-call system prompt override (defaults to self.system_prompt).
                 Pass the composed prompt here instead of mutating self.system_prompt so
                 concurrent requests can't clobber each other.
@@ -204,7 +208,7 @@ class Agent:
             logger.error(f"Error generating response: {str(e)}")
             raise
 
-    async def generate_stream(self, prompt: str, system_prompt: Optional[str] = None) -> AsyncGenerator[Tuple[str, Optional[dict], Optional[LogprobsResult]], None]:
+    async def generate_stream(self, prompt: Union[str, List[dict]], system_prompt: Optional[str] = None) -> AsyncGenerator[Tuple[str, Optional[dict], Optional[LogprobsResult]], None]:
         """Generate a streaming response, falling back to the secondary model if the
         primary fails to open the stream. Note: logprobs not available in streaming mode.
 
@@ -258,8 +262,9 @@ def build_agents() -> Tuple[Optional[Agent], Optional[Agent]]:
     if not settings.llm_configured:
         logger.warning(f"{LLM_REQUIRED} not all set — IRT agents unavailable until configured; chat turns fail.")
         return None, None
-    # Routing: the small model.
-    routing = Agent(settings.llm_small_model, ROUTING_PROMPT, temperature=0.1)
+    # Routing: the small model. Every call passes its own one-word prompt (step
+    # checks, talk / language / replay / new-version checks), so there is no default.
+    routing = Agent(settings.llm_small_model, "", temperature=0.1)
     # Responses: the main model.
     response = Agent(settings.llm_model, "your_response_prompt", temperature=0.1)
     return routing, response
