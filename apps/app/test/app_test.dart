@@ -1280,6 +1280,8 @@ void main() {
       tester.getTopLeft(find.text('Welcome to')).dy,
       lessThan(tester.getTopLeft(find.byType(BrandLogo)).dy),
     );
+    // No way back from the first page, no way on from the last.
+    expect(_arrowShown(tester, Icons.arrow_back), isFalse);
     for (var page = 1; page < 5; page++) {
       await tester.tap(find.byIcon(Icons.arrow_forward));
       await _settle(tester);
@@ -1293,6 +1295,8 @@ void main() {
       }
     }
     expect(find.text('All answers are optional.'), findsOneWidget);
+    expect(_arrowShown(tester, Icons.arrow_forward), isFalse);
+    expect(_arrowShown(tester, Icons.arrow_back), isTrue);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Get started'));
     await _settle(tester);
@@ -1667,3 +1671,10 @@ void main() {
     expect(find.text(_en.chatSessionDoneCta), findsOneWidget);
   });
 }
+
+/// Whether an onboarding arrow is visible (hidden arrows keep their space).
+bool _arrowShown(WidgetTester tester, IconData icon) => tester
+    .widget<Visibility>(
+      find.ancestor(of: find.byIcon(icon), matching: find.byType(Visibility)),
+    )
+    .visible;

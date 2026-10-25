@@ -81,16 +81,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
               child: Row(
                 children: [
-                  IconButton(
-                    onPressed: _page == 0 ? null : () => _go(_page - 1),
-                    icon: const Icon(Icons.arrow_back),
+                  // Hidden, not removed, on the first/last page so the
+                  // dots stay centred.
+                  Visibility.maintain(
+                    visible: _page > 0,
+                    child: IconButton(
+                      onPressed: () => _go(_page - 1),
+                      icon: const Icon(Icons.arrow_back),
+                    ),
                   ),
                   const Spacer(),
                   _Dots(count: _pageCount, current: _page),
                   const Spacer(),
-                  IconButton(
-                    onPressed: isLast ? null : () => _go(_page + 1),
-                    icon: const Icon(Icons.arrow_forward),
+                  Visibility.maintain(
+                    visible: !isLast,
+                    child: IconButton(
+                      onPressed: () => _go(_page + 1),
+                      icon: const Icon(Icons.arrow_forward),
+                    ),
                   ),
                 ],
               ),
