@@ -132,8 +132,10 @@ class ChatResponse(BaseModel):
         default=None,
         description=(
             "Clinical rewrite-safety verdict from the neuro-symbolic SafetyCritic. "
-            "Populated only during the `rewriting` stage; None otherwise or when the "
-            "critic is unavailable (None means 'not evaluated', not 'safe')."
+            "Populated only during the `rewriting` stage; None otherwise, for a plain "
+            "reply ('yes', 'that's it') or when the critic is unavailable (None means "
+            "'not evaluated', not 'safe'). A verdict dropped as a false alarm comes "
+            "back with is_safe true and the critic's node_id."
         ),
     )
     nightmare_summary: str | None = Field(

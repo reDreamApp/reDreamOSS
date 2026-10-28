@@ -9,13 +9,24 @@ from typing import Any
 from ..llm.base import LlmClient
 from ..llm.json_parse import parse_json_object
 from ..models import Language, SafetyCategory, SafetyResponse, SafetyRisk, Stage
-from ..prompts.safety import PROMPT_VERSION, SAFETY_PROMPT_DE, SAFETY_PROMPT_EN
+from ..prompts.safety import (
+    PROMPT_VERSION,
+    SAFETY_PROMPT_DE,
+    SAFETY_PROMPT_EN,
+    SAFETY_PROMPT_FALLBACK_DE,
+    SAFETY_PROMPT_FALLBACK_EN,
+)
 
 log = logging.getLogger(__name__)
 
 _PROMPT_BY_LANG: dict[Language, str] = {
     Language.EN: SAFETY_PROMPT_EN,
     Language.DE: SAFETY_PROMPT_DE,
+}
+# The fallback model misses real farewells with the revenge rule (v0.5.1).
+_FALLBACK_PROMPT_BY_LANG: dict[Language, str] = {
+    Language.EN: SAFETY_PROMPT_FALLBACK_EN,
+    Language.DE: SAFETY_PROMPT_FALLBACK_DE,
 }
 
 _RESPONSE_FORMAT: dict[str, Any] = {"type": "json_object"}
@@ -39,6 +50,10 @@ _MAX_BARE_ANSWER_WORDS = 3
 # In these stages every assistant message is about the user's dream, even
 # when it does not say "dream".
 _DREAM_STAGES = frozenset({Stage.RECORDING, Stage.REWRITING, Stage.SUMMARY})
+_GREETING_CONTEXT = (
+    "[Assistant message being replied to (the app's greeting)]\n"
+    "Tell me about a dream that troubles you."
+)
 
 
 def _is_bare_answer(text: str) -> bool:
@@ -81,21 +96,22 @@ async def classify(
             risk=SafetyRisk.NONE, categories=[], confidence=1.0, prompt_version=PROMPT_VERSION
         )
 
-    system_prompt = _PROMPT_BY_LANG[language]
     parts: list[str] = []
     if stage is not None:
         parts.append(f"[IRT stage: {stage.value}]")
     if context:
         about = " (about the user's dream)" if stage in _DREAM_STAGES else ""
         parts.append(f"[Assistant message being replied to{about}]\n{context}")
+    elif stage is Stage.RECORDING:
+        # The chat's first message answers the app's greeting, which is not
+        # in the history: without it, nightmares told in the present tense
+        # read as real events (2026-10-27 simulated users, v0.5.0).
+        parts.append(_GREETING_CONTEXT)
     parts.append(f"[User message to classify]\n{text}" if parts else text)
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "\n\n".join(parts)},
-    ]
+    user_content = "\n\n".join(parts)
 
     try:
-        return await _ask(llm, model, messages, json_mode)
+        return await _ask(llm, model, _messages(_PROMPT_BY_LANG[language], user_content), json_mode)
     except Exception as exc:
         if fallback_llm is None or fallback_model is None:
             raise
@@ -105,7 +121,15 @@ async def classify(
             exc,
             fallback_model,
         )
-        return await _ask(fallback_llm, fallback_model, messages, json_mode)
+        fallback_messages = _messages(_FALLBACK_PROMPT_BY_LANG[language], user_content)
+        return await _ask(fallback_llm, fallback_model, fallback_messages, json_mode)
+
+
+def _messages(system_prompt: str, user_content: str) -> list[dict[str, Any]]:
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
 
 
 async def _ask(

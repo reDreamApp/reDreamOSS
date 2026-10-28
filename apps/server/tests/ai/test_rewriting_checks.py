@@ -46,6 +46,7 @@ _TALK = {
     "idk",
     "are you a therapist?",
     "i want to stop.",
+    "you decide. just write the new ending and give me the summary",
 }
 
 
@@ -203,6 +204,30 @@ async def test_every_other_verdict_stands(checks, node):
         _segment("I stab him", node, "maladaptive"),
     )
     assert await irt_app._is_false_alarm(mixed, "he shrinks and I stab him", "summary") is False
+
+
+async def test_a_dropped_verdict_is_reported_as_checked(checks, monkeypatch):
+    from redream_ai.clinical_safety.critic import SafetyResult
+
+    flagged = SafetyResult(
+        is_safe=False,
+        node_id="TRAUMA_REPLAY",
+        node_type="maladaptive",
+        category="replay",
+        constraint="NOTE",
+        severity="CRITICAL",
+    )
+
+    class _Critic:
+        async def evaluate_intervention(self, *args, **kwargs):
+            return flagged
+
+    monkeypatch.setattr(irt_app, "safety_critic", _Critic())
+    result = await irt_app.evaluate_safety("Mr Brandt shrinks and apologises", _conversation())
+    assert result is not None and result.is_safe and result.node_id == "TRAUMA_REPLAY"
+    assert irt_app._safety_note(result, True) is None  # the reply gets no note
+    checks.changed = "SAME"
+    assert await irt_app.evaluate_safety("it happens again", _conversation()) is flagged
 
 
 async def test_without_the_original_dream_a_replay_verdict_stands(checks):
@@ -374,6 +399,22 @@ async def test_the_summary_goes_ahead_with_a_new_version(checks):
 
     assert await irt_app._hold_summary_without_rewrite("summary", c) == ("summary", False)
     assert c.stages == ["rewriting", "summary"]
+
+
+async def test_a_long_message_without_a_change_does_not_count(checks):
+    """2026-10-27 runs: a long "you decide" reply counted as the new version
+    without a check, and the summary came out with an empty one."""
+    delegate = "you decide. just write the new ending and give me the summary"
+    c = _conversation(_OPENER, ("user", delegate, None))
+    c.stages = ["rewriting", "summary"]
+    assert await irt_app._hold_summary_without_rewrite("summary", c) == ("rewriting", True)
+    assert f"talk:{delegate}" in checks.calls
+
+    change = "I turn around, switch on the light and the room is just my old bedroom again."
+    c = _conversation(_OPENER, ("user", change, None))
+    c.stages = ["rewriting", "summary"]
+    assert await irt_app._hold_summary_without_rewrite("summary", c) == ("summary", False)
+    assert await irt_app._is_plain_talk(change) is False  # the critic still gets long ones
 
 
 async def test_a_change_given_before_the_rewriting_opener_counts(checks):

@@ -265,8 +265,13 @@ def build_agents() -> Tuple[Optional[Agent], Optional[Agent]]:
     # Routing: the small model. Every call passes its own one-word prompt (step
     # checks, talk / language / replay / new-version checks), so there is no default.
     routing = Agent(settings.llm_small_model, "", temperature=0.1)
-    # Responses: the main model.
-    response = Agent(settings.llm_model, "your_response_prompt", temperature=0.1)
+    # Responses: the main model (the small one under SAFETY_DEBUG, config.py).
+    if settings.small_model_only:
+        logger.warning(f"SAFETY_DEBUG: every model call goes to {settings.llm_small_model}.")
+    elif settings.safety_debug:
+        logger.warning("SAFETY_DEBUG is ignored in production.")
+    main_model = settings.llm_small_model if settings.small_model_only else settings.llm_model
+    response = Agent(main_model, "your_response_prompt", temperature=0.1)
     return routing, response
 
 

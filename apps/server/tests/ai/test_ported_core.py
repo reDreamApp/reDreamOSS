@@ -19,6 +19,8 @@ from redream_ai.core.prompts import (
     ROUTING_PROMPTS,
     SUMMARY_REQUEST_DE,
     SUMMARY_REQUEST_EN,
+    SUMMARY_REVISION_REQUEST_DE,
+    SUMMARY_REVISION_REQUEST_EN,
     SYSTEM_PROMPT_TEMPLATES_DE,
     SYSTEM_PROMPT_TEMPLATES_EN,
 )
@@ -239,3 +241,22 @@ async def test_the_summary_reads_the_chat_as_one_document(monkeypatch, lang, req
             "Assistant: Shall I write the summary?\nUser: Yes\n</conversation>\n\n" + request_text,
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("lang", "request_text"),
+    [("en", SUMMARY_REVISION_REQUEST_EN), ("de", SUMMARY_REVISION_REQUEST_DE)],
+)
+async def test_a_reply_to_a_summary_is_quoted_in_the_request(monkeypatch, lang, request_text):
+    """With the plain request the same summary came back whatever the user asked."""
+    responder = _RecordingAgent("Title: ...")
+    monkeypatch.setattr(irt_app, "response_agent", responder)
+    conv = Conversation(session_id="s", language=lang, stages=["rewriting", "summary", "summary"])
+    conv.add_message("A wolf chases me.", "user")
+    conv.add_message("Title: The wolf", "assistant", "summary")
+    conv.add_message("Add that I climb a tree.", "user")
+
+    await irt_app.get_response_async("summary", "Add that I climb a tree.", conv)
+
+    content = responder.calls[0]["prompt"][0]["content"]
+    assert content.endswith(request_text.format(message="Add that I climb a tree."))

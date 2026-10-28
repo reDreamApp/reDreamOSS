@@ -1,6 +1,7 @@
 from typing import List, Tuple, AsyncGenerator, Optional
 import asyncio
 import contextlib
+import dataclasses
 import re
 from .models import Conversation, Stage, ChatInput, ChatResponse
 import hashlib
@@ -12,6 +13,7 @@ from .prompts import (ROUTING_PROMPTS, SYSTEM_PROMPT_TEMPLATES_DE, SYSTEM_PROMPT
                       SAFETY_NOTE_INTRO_DE, SAFETY_NOTE_INTRO_EN,
                       SAFETY_NOTE_STYLE_DE, SAFETY_NOTE_STYLE_EN,
                       SUMMARY_REQUEST_DE, SUMMARY_REQUEST_EN,
+                      SUMMARY_REVISION_REQUEST_DE, SUMMARY_REVISION_REQUEST_EN,
                       RECORDING_ENOUGH_NOTE_DE, RECORDING_ENOUGH_NOTE_EN,
                       RECORDING_NO_DREAM_YET_NOTE_DE, RECORDING_NO_DREAM_YET_NOTE_EN,
                       REWRITING_ENOUGH_NOTE_DE, REWRITING_ENOUGH_NOTE_EN,
@@ -378,15 +380,16 @@ _talk_verdicts: dict[str, bool] = {}
 _TALK_VERDICTS_MAX = 512
 
 
-async def _is_plain_talk(text: str) -> bool:
+async def _is_plain_talk(text: str, any_length: bool = False) -> bool:
     """True when a short message says nothing about the dream ("yes", "that's all").
 
     Such a message gives the critic nothing to judge, but its classifier still
     answers, mostly with "replay" (10 of 13 plain replies in the 2026-10-14
     runs). Any doubt or failure counts as dream content, so the critic runs.
+    `any_length` asks about a longer message too (the summary hold-back).
     """
     text = text.strip()
-    if not text or len(text.split()) > _TALK_MAX_WORDS:
+    if not text or (not any_length and len(text.split()) > _TALK_MAX_WORDS):
         return False
     if not any(ch.isalpha() for ch in text):
         return True  # only symbols or emoji
@@ -467,8 +470,8 @@ async def resolve_language_switch(message: str, current: str) -> Optional[str]:
     Only messages that pass the word check above reach the small model (the
     routing agent, as for _is_plain_talk). It names the message's language
     (EN / DE / OTHER); the chat switches when that is the other of the two. A
-    timeout, an error, OTHER or any other answer keeps the language, and so
-    does the current language.
+    timeout, an error, MIXED, OTHER or any other answer keeps the language,
+    and so does the current language.
     """
     text = message.strip()
     if current not in _LANGUAGE_NAMES or not text or not _may_switch_language(text, current):
@@ -485,7 +488,7 @@ async def resolve_language_switch(message: str, current: str) -> Optional[str]:
         logger.error(f"Language check failed (the language stays): {type(e).__name__}")
         return None
     # Exactly one of the three words; "DE/EN" or "EN or DE" keep the language.
-    match = re.fullmatch(r"\s*(EN|DE|OTHER)[\s.!]*", (answer or "").upper())
+    match = re.fullmatch(r"\s*(EN|DE|MIXED|OTHER)[\s.!]*", (answer or "").upper())
     if match is None:
         logger.warning("Language check gave no usable answer (the language stays)")
         return None
@@ -565,13 +568,15 @@ def _rewriting_answers(conversation: Conversation) -> List[str]:
 async def _has_new_version(conversation: Conversation) -> bool:
     """True once the user has said anything about the new version of the dream.
 
-    Any message with content after the guide's first rewriting reply counts.
-    Without one, the model reads the whole chat: the change often comes in the
-    message that agrees to rewrite, or already while the dream is told. False
-    on a failure, so the summary waits.
+    Any message with content after the guide's first rewriting reply counts;
+    a long one is checked too ("you decide, just write the new ending" gave a
+    summary with an empty new version, 2026-10-27 runs). Without one, the
+    model reads the whole chat: the change often comes in the message that
+    agrees to rewrite, or already while the dream is told. False on a failure,
+    so the summary waits.
     """
     for answer in _rewriting_answers(conversation):
-        if not await _is_plain_talk(answer):
+        if not await _is_plain_talk(answer, any_length=True):
             return True
     try:
         answer, _, _ = await routing_agent.generate(
@@ -688,8 +693,12 @@ async def _repeat_note(conversation: Conversation, is_english: bool) -> Optional
 async def evaluate_safety(user_input: str, conversation: Conversation):
     """Run SafetyCritic on user input during the rewriting stage.
 
-    Returns SafetyResult or None if the critic is unavailable or fails.
-    Fail-open: the chatbot still has system prompt safety instructions.
+    Returns SafetyResult, or None when the critic is unavailable, fails or
+    has nothing to judge (a plain reply). Fail-open: the chatbot still has
+    system prompt safety instructions. A verdict dropped as a false alarm
+    comes back as safe without a note, not as None: None reads as "not
+    evaluated" (the 2026-10-27 simulated users counted 37 of 40 such drops
+    as unchecked turns).
     """
     if safety_critic is None:
         return None
@@ -705,7 +714,9 @@ async def evaluate_safety(user_input: str, conversation: Conversation):
         logger.info(f"Safety evaluation: is_safe={result.is_safe}, node={result.node_id}, severity={result.severity}")
         if not result.is_safe and await _is_false_alarm(result, user_input, conversation.nightmare_summary):
             logger.info(f"Safety evaluation dropped as a false alarm: node={result.node_id}")
-            return None
+            return dataclasses.replace(
+                result, is_safe=True, constraint=None, correction_strategies=None, severity=None
+            )
         return result
     except Exception as e:
         logger.error(f"Safety evaluation failed (proceeding without constraint): {e}")
@@ -729,11 +740,17 @@ def _reply_input(stage: str, conversation: Conversation) -> List[dict]:
     The chat as user/assistant turns, so the model knows which replies were
     its own (the app's greeting is display-only; the boundary names it). The
     summary is a text about the chat, so that step gets the chat as one
-    document with the request to write it.
+    document with the request to write it; after a summary, the request quotes
+    the user's answer to it.
     """
     if stage != Stage.SUMMARY.value:
         return conversation.history_as_turns()
-    request = SUMMARY_REQUEST_EN if conversation.language == "en" else SUMMARY_REQUEST_DE
+    is_english = conversation.language == "en"
+    if Stage.SUMMARY.value in conversation.stages[:-1]:
+        answer = next((m.content for m in reversed(conversation.messages) if m.role == "user"), "")
+        request = (SUMMARY_REVISION_REQUEST_EN if is_english else SUMMARY_REVISION_REQUEST_DE).format(message=answer)
+    else:
+        request = SUMMARY_REQUEST_EN if is_english else SUMMARY_REQUEST_DE
     transcript = conversation.get_history_as_string()
     return [{"role": "user", "content": f"<conversation>\n{transcript}\n</conversation>\n\n{request}"}]
 

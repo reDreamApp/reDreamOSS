@@ -125,6 +125,16 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
 
+    # SAFETY_DEBUG=true: every text model call (guide, routing, crisis
+    # classifier, rewrite critic, summaries) goes to LLM_SMALL_MODEL, so a
+    # safety-layer debugging run is cheap and every answer comes from one
+    # model. Ignored when ENVIRONMENT=production.
+    safety_debug: bool = False
+
+    @property
+    def small_model_only(self) -> bool:
+        return self.safety_debug and self.environment != "production"
+
     @property
     def llm_configured(self) -> bool:
         """True once the endpoint and both chat models are set."""
@@ -134,7 +144,10 @@ class Settings(BaseSettings):
 
     @property
     def safety_model(self) -> str:
-        """The crisis classifier's model: LLM_SAFETY_MODEL, else LLM_SMALL_MODEL."""
+        """The crisis classifier's model: LLM_SAFETY_MODEL, else LLM_SMALL_MODEL
+        (always LLM_SMALL_MODEL under SAFETY_DEBUG)."""
+        if self.small_model_only:
+            return self.llm_small_model
         return self.llm_safety_model or self.llm_small_model
 
     @property
@@ -201,6 +214,13 @@ class Settings(BaseSettings):
             and self.tts_key
             and all(self.tts_voice_for(lang) for lang in TTS_LANGUAGES)
         )
+
+    @field_validator("safety_debug", mode="before")
+    @classmethod
+    def _empty_means_off(cls, v: object) -> object:
+        if isinstance(v, str) and not v.strip():
+            return False
+        return v
 
     @field_validator("llm_reasoning_effort", mode="before")
     @classmethod
