@@ -71,7 +71,7 @@ docker compose exec server python -m redream_api.cli set-password someone@exampl
 
 ## The app
 
-Point people to the APK on the [releases page](https://github.com/reDreamApp/reDreamOSS/releases/latest). On first start it asks for the server address, checks `/api/v1/instance` and says when the app or the server needs an update. Fill in the **Instance** block in `.env` so people see whom they are dealing with: `INSTANCE_NAME`, `OPERATOR_NAME`, `OPERATOR_CONTACT` (an email address or a URL; shown under Settings → Contact and on "Forgot password?") and `PRIVACY_URL` (your privacy policy, linked in Settings and on the consent screen).
+Point people to the APK on the [releases page](https://github.com/reDreamApp/reDreamOSS/releases/latest); releases carry one only once the project's signing key is set up, until then hand out your own build (below) or serve the web app (`WEB_DIR`, see [Limits](#limits)). On first start it asks for the server address, checks `/api/v1/instance` and says when the app or the server needs an update. Fill in the **Instance** block in `.env` so people see whom they are dealing with: `INSTANCE_NAME`, `OPERATOR_NAME`, `OPERATOR_CONTACT` (an email address or a URL; shown under Settings → Contact and on "Forgot password?") and `PRIVACY_URL` (your privacy policy, linked in Settings and on the consent screen).
 
 Your own build, with your address preset so nobody types it: `cd apps/app && fvm flutter build apk --release --dart-define=DEFAULT_SERVER_URL=https://dreams.example.org`, signed with your own key and with your own `applicationId` in `android/app/build.gradle.kts`, so it installs next to the project's APK instead of over it. iOS builds need a Mac with Xcode and your own Apple developer account.
 

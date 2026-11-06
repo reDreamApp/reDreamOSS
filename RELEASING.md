@@ -2,7 +2,7 @@
 
 `main` is the only long-lived branch; CI proves every push (server tests and lint, the Postgres schema from zero on Postgres 17 against the ORM models, the compose stack built and started with a login, the Flutter analyzer and tests). A release is a version tag on a commit of `main`: `vMAJOR.MINOR.PATCH`.
 
-- **The app**: pushing the tag runs `.github/workflows/release-apk.yml`. It refuses a tag whose commit is not on `main`, analyzes and tests the app, builds a release APK signed with the project's upload key (version name from the tag, version code derived from it: 1.2.3 → 1002003; `pubspec.yaml`'s version is not used) and attaches it, with its SHA-256, to a GitHub Release. One APK serves every server. The same release carries the web app (`reDreamOSS-web-<tag>.zip` + `.sha256`): `make start` downloads the one for the checkout's newest tag, so a tag without a release leaves personal-mode users to build it themselves.
+- **The app**: pushing the tag runs `.github/workflows/release-apk.yml`. It refuses a tag whose commit is not on `main`, analyzes and tests the app, builds the web app and attaches it (`reDreamOSS-web-<tag>.zip` + `.sha256`) to a GitHub Release: `make start` downloads the one for the checkout's newest tag, so a tag without a release leaves personal-mode users to build it themselves. Once the signing key below is set up, the same release carries a release APK signed with the project's upload key (version name from the tag, version code derived from it: 1.2.3 → 1002003; `pubspec.yaml`'s version is not used), with its SHA-256. One APK serves every server. Without the four secrets the release has the web app only; with some but not all of them the run fails.
 - **The server**: operators update with `git pull` and `make update`; the server container applies pending migrations before it starts (a failed migration stops it), so code and schema always match.
 
 ## Order of changes
@@ -38,9 +38,9 @@ Then edit the release's notes on GitHub: what changed for people, what changed f
 - **Tag protection**: a ruleset for tags `v*` that only maintainers may create. The workflow signs only tags whose commit is on `main`, but anyone who can push a tag can start it.
 - **Optional, stronger**: move the four secrets below into an environment `release` with required reviewers and add `environment: release` to the job, so every signed build waits for an approval.
 
-## One-time: the signing key
+## One-time, optional: the signing key
 
-The release workflow needs four repository secrets. Create the upload key once, on your own machine:
+For the APK the release workflow needs four repository secrets; without them releases carry the web app only. Create the upload key once, on your own machine:
 
 ```bash
 keytool -genkeypair -v -keystore upload-keystore.jks -alias upload \

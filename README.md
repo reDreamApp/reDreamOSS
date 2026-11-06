@@ -44,7 +44,7 @@ Android / iOS app ──HTTPS──► server (one container) ──► your mod
 ```
 
 - **Run a server:** [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md). A Linux box with Docker, a model provider's API key, about fifteen minutes.
-- **Use the app:** install the APK from the [latest release](https://github.com/reDreamApp/reDreamOSS/releases/latest), enter the server address you were given, sign up with the invite code. Release builds only talk https.
+- **Use the app:** install the APK from the [latest release](https://github.com/reDreamApp/reDreamOSS/releases/latest) (or your server's own build if the release has none), enter the server address you were given, sign up with the invite code. Release builds only talk https.
 - **Work on the code:** [docs/LOCAL_TESTING.md](docs/LOCAL_TESTING.md), then [RELEASING.md](RELEASING.md).
 
 ## Repository layout

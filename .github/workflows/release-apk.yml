@@ -1,7 +1,7 @@
-# Builds the signed Android APK and the web app for a version tag and attaches
-# both to a GitHub Release (`make start` downloads the web app for its tag).
-# Push a tag like v1.2.0 on a commit of main; see RELEASING.md for the
-# one-time signing-key setup (four repository secrets).
+# Builds the web app for a version tag, and the signed Android APK once the
+# signing key is set up, and attaches them to a GitHub Release (`make start`
+# downloads the web app for its tag). Push a tag like v1.2.0 on a commit of
+# main; see RELEASING.md for the optional signing key (four repository secrets).
 name: Release
 
 on:
@@ -16,9 +16,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  apk:
-    name: signed APK → GitHub Release
-    # Forks have no signing key; the tag push of a fork does nothing.
+  release:
+    name: web app (+ signed APK) → GitHub Release
+    # make start downloads from this repository; the tag push of a fork does nothing.
     if: github.repository == 'reDreamApp/reDreamOSS'
     runs-on: ubuntu-latest
     permissions:
@@ -55,17 +55,26 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+      # No secrets: the release carries the web app only. Some of them: a mistake, stop.
       - name: Write the signing key
+        id: key
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          present=0
           for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
             eval "value=\${$name}"
-            [ -n "$value" ] || { echo "::error::repository secret ANDROID_$name is missing (RELEASING.md)"; exit 1; }
+            [ -z "$value" ] || present=$((present + 1))
           done
+          if [ "$present" -eq 0 ]; then
+            echo "::notice::no signing key (RELEASING.md): this release carries the web app only"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ "$present" -eq 4 ] || { echo "::error::only $present of the four ANDROID_* signing secrets are set (RELEASING.md)"; exit 1; }
           umask 077
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
           {
@@ -74,10 +83,12 @@ jobs:
             echo "keyAlias=$KEY_ALIAS"
             echo "keyPassword=$KEY_PASSWORD"
           } > android/key.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
       # One APK for every server: it asks for the address on first start.
       # The version code comes from the tag (1.2.3 -> 1002003), so it always
       # grows, whatever happens to this workflow's run counter.
-      - name: Build
+      - name: Build the APK
+        if: steps.key.outputs.signed == 'true'
         run: |
           version="${GITHUB_REF_NAME#v}"
           major="${version%%.*}"; rest="${version#*.}"
@@ -93,14 +104,23 @@ jobs:
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ steps.key.outputs.signed }}
         run: |
-          apk="reDreamOSS-$GITHUB_REF_NAME.apk"
-          cp build/app/outputs/flutter-apk/app-release.apk "$apk"
-          sha256sum "$apk" > "$apk.sha256"
           web="reDreamOSS-web-$GITHUB_REF_NAME.zip"
           (cd build/web && zip -qrX "../../$web" .)
           sha256sum "$web" > "$web.sha256"
-          gh release create "$GITHUB_REF_NAME" "$apk" "$apk.sha256" "$web" "$web.sha256" \
+          set -- "$web" "$web.sha256"
+          notes="The web app (reDreamOSS-web-*.zip) is what make start serves on your own computer; it is fetched automatically."
+          if [ "$SIGNED" = true ]; then
+            apk="reDreamOSS-$GITHUB_REF_NAME.apk"
+            cp build/app/outputs/flutter-apk/app-release.apk "$apk"
+            sha256sum "$apk" > "$apk.sha256"
+            set -- "$apk" "$apk.sha256" "$@"
+            notes="Android app for any reDreamOSS server: install it, then enter your server's address (it must be https). $notes"
+          else
+            notes="$notes No Android app in this release; servers can hand out their own build (docs/SELF_HOSTING.md)."
+          fi
+          gh release create "$GITHUB_REF_NAME" "$@" \
             --verify-tag \
             --title "reDreamOSS $GITHUB_REF_NAME" \
-            --notes "Android app for any reDreamOSS server: install it, then enter your server's address (it must be https). The web app (reDreamOSS-web-*.zip) is what make start serves on your own computer; it is fetched automatically. Check downloads against their .sha256 files. Server changes in this version are in the commit history; update servers before handing out a new app (RELEASING.md)."
+            --notes "$notes Check downloads against their .sha256 files. Server changes in this version are in the commit history; update servers before handing out a new app (RELEASING.md)."
