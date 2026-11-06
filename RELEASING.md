@@ -30,6 +30,8 @@ git tag -a v1.2.0 -m "reDreamOSS 1.2.0"
 git push origin v1.2.0
 ```
 
+Tag a commit that does not itself change `.github/workflows/`: GitHub does not let the workflow's token publish a release whose commit changes workflow files ([REST docs](https://docs.github.com/en/rest/releases/releases#update-a-release)). The run then fails with `HTTP 403: Resource not accessible by integration` and leaves a draft with the files attached; publish it yourself with `gh release edit v1.2.0 --draft=false`.
+
 Then edit the release's notes on GitHub: what changed for people, what changed for operators (new settings, the update order above).
 
 ## One-time: repository settings
