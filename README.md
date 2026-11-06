@@ -1,6 +1,3 @@
-# reDreamOSS
-
- 
 
 <h1 align="center">reDreamOSS</h1>
 <h4 align="center">A self-help companion app against nightmares: record a dream, rewrite it, and rehearse — by reading or by listening.</h4>
