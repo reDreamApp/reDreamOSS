@@ -864,11 +864,11 @@ void main() {
     expect(find.text('Dream Journal'), findsOneWidget);
     expect(find.text('Lost in Dark Forest'), findsOneWidget);
     expect(find.text('Intensity: 8/10'), findsOneWidget);
-    expect(find.text('1 / 14 practiced'), findsOneWidget);
+    expect(find.text('1 / 14 rehearsed'), findsOneWidget);
     // Not practiced today: no daily mark, and a single progress display.
     expect(find.text(_en.journalDailyDone), findsNothing);
     expect(find.byType(LinearProgressIndicator), findsNothing);
-    expect(find.text('Practice Dream'), findsOneWidget);
+    expect(find.text('Rehearse Dream'), findsOneWidget);
     expect(find.text('Flying'), findsOneWidget);
 
     await tester.tap(find.text('Nightmares'));
@@ -1254,7 +1254,7 @@ void main() {
     await tester.tap(find.text('Rewriting Guide'));
     await _settle(tester);
     for (final step in [
-      '1. Identify your nightmare',
+      '1. Record your nightmare',
       '2. Rewrite your dream',
       '3. Rehearse your new dream',
     ]) {
@@ -1539,15 +1539,15 @@ void main() {
 
     Color? colorOf(String text) =>
         tester.widget<Text>(find.text(text)).style?.color;
-    expect(colorOf('2 / 14 practiced'), isNot(BrandColors.green));
-    expect(colorOf('14 / 14 practiced!'), BrandColors.green);
+    expect(colorOf('2 / 14 rehearsed'), isNot(BrandColors.green));
+    expect(colorOf('14 / 14 rehearsed!'), BrandColors.green);
     expect(find.text(_en.journalDailyDone), findsNWidgets(2));
     expect(find.byIcon(Icons.check_circle_rounded), findsNWidgets(2));
 
     // The dots run from edge to edge; today's is the green one.
     final card = find
         .ancestor(
-          of: find.text('2 / 14 practiced'),
+          of: find.text('2 / 14 rehearsed'),
           matching: find.byType(Column),
         )
         .first;
@@ -1570,7 +1570,7 @@ void main() {
           matching: find.byType(Row),
         )
         .first;
-    final text = find.text('2 / 14 practiced');
+    final text = find.text('2 / 14 rehearsed');
     expect(
       tester.getTopLeft(find.byWidget(dots.first)).dx,
       closeTo(tester.getTopLeft(text).dx, 0.01),
@@ -1604,7 +1604,7 @@ void main() {
     await _settle(tester);
 
     // The practice button opens the dream itself, with audio one tap away.
-    await tester.tap(find.text('Practice Dream'));
+    await tester.tap(find.text('Rehearse Dream'));
     await _settle(tester);
     expect(find.text('I found the way home.'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, _en.detailListen), findsOneWidget);

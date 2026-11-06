@@ -110,7 +110,7 @@
     }
   },
   "onboardingWelcomeTitle": "Welcome to",
-  "onboardingWelcomeBody": "Your new favorite app to log dreams and rewrite the difficult ones.",
+  "onboardingWelcomeBody": "Your new favorite app to record dreams and rewrite the difficult ones.",
   "onboardingScienceTitle": "The idea behind it",
   "onboardingScienceBody": "A routine inspired by imagery-rehearsal techniques. reDreamOSS itself is not therapy and does not treat any condition.",
   "onboardingAiTitle": "AI-guided sessions",
@@ -168,8 +168,8 @@
   "homePracticeTitle": "Daily rehearsal",
   "homeGuideTitle": "Rewriting Guide",
   "homeLearnTitle": "Learn more about sleep and dreams",
-  "guideWelcomeBody": "This guide walks you through the three steps: identify, rewrite, rehearse.",
-  "guideStep1Title": "Identify your nightmare",
+  "guideWelcomeBody": "This guide walks you through the three steps: Recording, Rewriting, Rehearsal.",
+  "guideStep1Title": "Record your nightmare",
   "guideStep1Body": "Recall your nightmare. Focus on the most disturbing parts and the emotions it evokes.",
   "guideStep2Title": "Rewrite your dream",
   "guideStep2Body": "Change the nightmare's narrative. Imagine a positive outcome or a way to overcome the threat.",
@@ -226,7 +226,7 @@
       }
     }
   },
-  "journalPracticed": "{count} / {target} practiced",
+  "journalPracticed": "{count} / {target} rehearsed",
   "@journalPracticed": {
     "placeholders": {
       "count": {
@@ -237,7 +237,7 @@
       }
     }
   },
-  "journalPracticedAll": "{count} / {target} practiced!",
+  "journalPracticedAll": "{count} / {target} rehearsed!",
   "@journalPracticedAll": {
     "placeholders": {
       "count": {
@@ -249,7 +249,7 @@
     }
   },
   "journalDailyDone": "Daily rehearsal",
-  "journalPracticeDream": "Practice Dream",
+  "journalPracticeDream": "Rehearse Dream",
   "journalSetFocus": "Set as focus dream",
   "journalFocusLabel": "Focus dream",
   "journalDraftLabel": "Not synced yet",
@@ -295,9 +295,9 @@
   "detailMeditation4": "Close your eyes and notice how this version feels.",
   "detailNoChatHistory": "No chat history available for this dream.",
   "practiceAudioTitle": "Audio rehearsal",
-  "practiceSavedOffline": "You're offline. This practice is saved on your device and will sync automatically when you're back online.",
-  "practiceAlreadyToday": "Today's practice is already recorded.",
-  "practiceSaveFailed": "Failed to save practice: {error}",
+  "practiceSavedOffline": "You're offline. This rehearsal is saved on your device and will sync automatically when you're back online.",
+  "practiceAlreadyToday": "Today's rehearsal is already saved.",
+  "practiceSaveFailed": "Failed to save rehearsal: {error}",
   "@practiceSaveFailed": {
     "placeholders": {
       "error": {
@@ -305,7 +305,7 @@
       }
     }
   },
-  "practiceRecorded": "Practice recorded. Well done!",
+  "practiceRecorded": "Rehearsal saved. Well done!",
   "audioLoading": "Loading your audio rehearsal…",
   "audioLoadFailed": "Could not load audio rehearsal",
   "audioTryAgain": "Try again",
@@ -334,7 +334,7 @@
   "editorDreamHint": "Describe your dream in detail…",
   "editorDreamHelp": "Describe what happened. Include key scenes, feelings, and themes.",
   "editorIsNightmare": "This is a nightmare",
-  "editorIsNightmareHelp": "Enable to add an intensity rating and create a rewritten version to practice.",
+  "editorIsNightmareHelp": "Enable to add an intensity rating and create a rewritten version to rehearse.",
   "editorIntensityTitle": "Nightmare intensity",
   "editorIntensityHelp": "Rate the intensity of your nightmare.",
   "editorRewrittenLabel": "Transformed dream",
