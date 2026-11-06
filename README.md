@@ -98,6 +98,7 @@ Binding architectural decisions live in [`docs/decisions/`](docs/decisions/READM
 
 ## License
 
-Copyright 2026 Daniel Menzel, Katharina Lüth and Ramon Zacharias.
+Copyright 2026 Daniel Menzel, Katharina Lüth and Ramon Zacharias.<br>
+Special thanks to our former contributors Mahsa Zand and Tjark Darius who helped to create reDreamAI!
 
 Licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE). Report security problems privately: [SECURITY.md](SECURITY.md).
