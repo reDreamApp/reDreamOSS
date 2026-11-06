@@ -1,0 +1,2 @@
+# Test fixture, not a secret: base64 of "Claude-personal-key-1234567890abc".
+aee5727300048312632a2ffb327da56009a1f81a:apps/app/test/core/auth/personal_key_test.dart:generic-api-key:10

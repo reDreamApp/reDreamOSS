@@ -4,6 +4,14 @@ A self-help companion app for working with difficult dreams: record a dream, rew
 
 reDreamOSS is the open version of [reDreamAI](https://github.com/reDreamApp/reDreamAI): any OpenAI-compatible model provider, on your own computer or on a small server you run for others ([ADR 0013](docs/decisions/0013-origin-of-redreamoss.md), [ADR 0014](docs/decisions/0014-personal-mode.md)).
 
+<p align="center">
+  <img src="docs/screenshots/home.webp" width="180" alt="Home: a button to begin a session and the progress tiles">
+  <img src="docs/screenshots/session.webp" width="180" alt="Session: the AI guide asks how the dream could end differently">
+  <img src="docs/screenshots/journal.webp" width="180" alt="Journal: dreams and nightmares with their rehearsal progress">
+  <img src="docs/screenshots/dream.webp" width="180" alt="A rewritten dream to read, with a Listen button">
+</p>
+<p align="center"><sub>Home · Session with the AI guide · Journal · Rewritten dream (example content)</sub></p>
+
 ## For yourself, on your computer
 
 You need [uv](https://docs.astral.sh/uv/) and an API key for an OpenAI-compatible model provider.
