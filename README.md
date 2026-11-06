@@ -1,9 +1,17 @@
 # reDreamOSS
 
-A self-help companion app for working with difficult dreams: record a dream, rewrite it with a new ending together with an AI guide, and rehearse it — by reading or by listening. *reDreamOSS does not diagnose or treat any condition. If nightmares are seriously distressing you, please talk to a doctor or psychotherapist.*
+ 
 
-reDreamOSS is the open version of [reDreamAI](https://github.com/reDreamApp/reDreamAI): any OpenAI-compatible model provider, on your own computer or on a small server you run for others ([ADR 0013](docs/decisions/0013-origin-of-redreamoss.md), [ADR 0014](docs/decisions/0014-personal-mode.md)).
+<h1 align="center">reDreamOSS</h1>
+<h4 align="center">A self-help companion app for working with difficult dreams: record a dream, rewrite it with a new ending together with an AI guide, and rehearse it — by reading or by listening.</h4>
+<div align="center">
 
+reDreamOSS is the open version of [reDreamAI](https://github.com/reDreamApp/reDreamAI): any OpenAI-compatible model provider, on your own computer or on a small server you run for others ([ADR 0013](docs/decisions/0013-origin-of-redreamoss.md), [ADR 0014](docs/decisions/0014-personal-mode.md))
+
+</div>
+
+<br>
+    
 <p align="center">
   <img src="docs/screenshots/home.webp" width="180" alt="Home: a button to begin a session and the progress tiles">
   <img src="docs/screenshots/session.webp" width="180" alt="Session: the AI guide asks how the dream could end differently">
@@ -11,6 +19,8 @@ reDreamOSS is the open version of [reDreamAI](https://github.com/reDreamApp/reDr
   <img src="docs/screenshots/dream.webp" width="180" alt="A rewritten dream to read, with a Listen button">
 </p>
 <p align="center"><sub>Home · Session with the AI guide · Journal · Rewritten dream (example content)</sub></p>
+
+<br>*reDreamAI does not diagnose or treat any condition. If you have PTSD or chronic nightmares, please talk to a doctor or psychotherapist.*<br>
 
 ## For yourself, on your computer
 
