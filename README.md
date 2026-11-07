@@ -4,8 +4,10 @@
     A self-help companion app against nightmares: record a dream, rewrite it, and rehearse daily.
 </h4>
 
-reDreamOSS is the open version of [reDreamAI](https://github.com/reDreamApp/reDreamAI).<br>
-Use any OpenAI-compatible LLM provider locally or on a small server ([ADR 0013](docs/decisions/0013-origin-of-redreamoss.md), [ADR 0014](docs/decisions/0014-personal-mode.md))
+<p align="center">
+    reDreamOSS is the open version of [reDreamAI](https://github.com/reDreamApp/reDreamAI).<br>
+    Use any OpenAI-compatible LLM provider locally or on a small server ([ADR 0013](docs/decisions/0013-origin-of-redreamoss.md), [ADR 0014](docs/decisions/0014-personal-mode.md))
+</p>
 
 </div>
 
